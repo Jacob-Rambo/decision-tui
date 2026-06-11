@@ -231,6 +231,14 @@ class DecisionApp(App):
                                 id=f"input-{i}",
                             )
                             widget.border_title = "pick one · enter selects"
+                        elif dtype == "bool":
+                            labels = d.get("labels") or ["True", "False"]
+                            widget = RadioSet(
+                                DecisionRadio(labels[0]),
+                                DecisionRadio(labels[1]),
+                                id=f"input-{i}",
+                            )
+                            widget.border_title = "true / false"
                         elif dtype == "multi":
                             widget = SelectionList(
                                 *[
@@ -276,6 +284,9 @@ class DecisionApp(App):
                 selected = [option_id(d["options"][idx])]
             else:
                 selected = []
+        elif dtype == "bool":
+            idx = widget.pressed_index
+            selected = [("true", "false")[idx]] if idx >= 0 else []
         elif dtype == "multi":
             picked = sorted(v for v in widget.selected if isinstance(v, int))
             selected = [option_id(d["options"][j]) for j in picked]
@@ -310,14 +321,16 @@ class DecisionApp(App):
 
     def on_radio_set_changed(self, event: RadioSet.Changed) -> None:
         idx = int(event.radio_set.id.removeprefix("input-"))
-        other_input = self.query_one(f"#other-{idx}", Input)
-        if event.radio_set.pressed_index == len(self.decisions[idx]["options"]):
-            # Other… chosen: open the text field and wait for typing
-            other_input.disabled = False
-            other_input.focus()
-            self._refresh_nav()
-            return
-        other_input.disabled = True
+        d = self.decisions[idx]
+        if d.get("type", "single") == "single":  # bool radio sets have no Other…
+            other_input = self.query_one(f"#other-{idx}", Input)
+            if event.radio_set.pressed_index == len(d["options"]):
+                # Other… chosen: open the text field and wait for typing
+                other_input.disabled = False
+                other_input.focus()
+                self._refresh_nav()
+                return
+            other_input.disabled = True
         self._refresh_nav()
         # fast keyboard flow: picking an option advances to the next
         # unanswered decision (notes stay reachable by navigating back)

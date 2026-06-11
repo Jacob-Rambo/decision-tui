@@ -9,8 +9,9 @@ A spec is a JSON document:
     {
       "id": "deploy-strategy",               # required, unique
       "question": "Which deploy strategy?",  # required
-      "type": "single",                      # single | multi | text (default: single)
+      "type": "single",                      # single | multi | bool | text (default: single)
       "required": true,                      # default true
+      "labels": ["True", "False"],           # bool only, optional: display labels for the pair
       "context_md": "markdown: tables, comparisons, evidence",  # optional
       "options": [                           # required for single/multi
         {
@@ -27,6 +28,11 @@ A spec is a JSON document:
 Every single/multi decision automatically gets an "Other…" free-text option
 appended by the renderer (like AskUserQuestion) — never define your own Other
 option in a spec.
+
+bool decisions take no options: they render as a True/False radio pair (display
+labels overridable via "labels") and answer with canonical "true"/"false" ids
+regardless of the labels. No Other option — a bool is a closed proposition;
+nuance goes in notes.
 
 Answers are written as:
 
@@ -49,7 +55,7 @@ non-empty.
 import json
 from pathlib import Path
 
-VALID_TYPES = ("single", "multi", "text")
+VALID_TYPES = ("single", "multi", "bool", "text")
 
 
 class SpecError(ValueError):
@@ -88,6 +94,14 @@ def validate_spec(spec: dict) -> None:
         dtype = d.get("type", "single")
         if dtype not in VALID_TYPES:
             raise SpecError(f"{where}.type must be one of {VALID_TYPES}, got {dtype!r}")
+        if dtype == "bool":
+            labels = d.get("labels")
+            if labels is not None and (
+                not isinstance(labels, list)
+                or len(labels) != 2
+                or not all(isinstance(s, str) and s for s in labels)
+            ):
+                raise SpecError(f"{where}.labels must be two non-empty strings")
         if dtype in ("single", "multi"):
             options = d.get("options")
             if not isinstance(options, list) or not options:

@@ -31,8 +31,13 @@ async def run() -> None:
         sel = app.query_one("#input-1", SelectionList)
         sel.select(0)
         sel.select(2)
-        # decision 2 (text): leave empty — it's optional
-        assert isinstance(app.query_one("#input-2", TextArea), TextArea)
+        # decision 2 (bool): pick False (index 1); it has exactly two buttons
+        boolset = app.query_one("#input-2", RadioSet)
+        bool_buttons = boolset.query("RadioButton")
+        assert len(bool_buttons) == 2, "bool must not get an Other… button"
+        bool_buttons[1].value = True
+        # decision 3 (text): leave empty — it's optional
+        assert isinstance(app.query_one("#input-3", TextArea), TextArea)
         await pilot.pause()
 
         app.action_submit()
@@ -43,6 +48,7 @@ async def run() -> None:
     a = data["answers"]
     assert a["deploy-strategy"]["selected"] == ["canary"], a
     assert a["feature-flags"]["selected"] == ["new-editor", "dark-mode"], a
+    assert a["tag-stable"]["selected"] == ["false"], a
     assert a["release-notes"]["selected"] == [], a
 
     # cancel path writes a cancelled answers file
@@ -84,6 +90,8 @@ async def run() -> None:
         other1 = app3.query_one("#other-1", Input)
         assert not other1.disabled
         other1.value = "enable-metrics-flag"
+        # decision 2 (bool): required, answer True
+        app3.query_one("#input-2", RadioSet).query("RadioButton")[0].value = True
         await pilot.pause()
 
         app3.action_submit()
@@ -96,6 +104,7 @@ async def run() -> None:
     assert a3["deploy-strategy"]["other"] == "ship it behind a header flag", a3
     assert a3["feature-flags"]["selected"] == ["new-editor"], a3
     assert a3["feature-flags"]["other"] == "enable-metrics-flag", a3
+    assert a3["tag-stable"]["selected"] == ["true"], a3
 
     print("SMOKE TEST PASSED")
 
