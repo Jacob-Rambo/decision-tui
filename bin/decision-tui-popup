@@ -13,8 +13,10 @@ if [ $# -ne 2 ]; then
     echo "usage: decision-tui-popup <spec.json> <answers.json>" >&2
     exit 2
 fi
-spec=$1
-answers=$2
+# display-popup runs its command in the tmux session's working directory, not
+# the caller's — resolve paths now so relative arguments can't dangle
+spec=$(realpath "$1")
+answers=$(realpath -m "$2")
 if [ -z "${TMUX:-}" ]; then
     echo "decision-tui-popup: not inside tmux" >&2
     exit 3
