@@ -1,0 +1,250 @@
+"""decision-tui: render a JSON decision spec as a Textual dashboard, write answers as JSON.
+
+Usage:
+    decision-tui <spec.json> <answers.json>
+    decision-tui --validate <spec.json>
+"""
+
+import signal
+import sys
+from pathlib import Path
+
+from textual.app import App, ComposeResult
+from textual.binding import Binding
+from textual.containers import Horizontal, VerticalScroll
+from textual.widgets import (
+    ContentSwitcher,
+    Footer,
+    Header,
+    Input,
+    Label,
+    ListItem,
+    ListView,
+    Markdown,
+    RadioButton,
+    RadioSet,
+    SelectionList,
+    TextArea,
+)
+from textual.widgets.selection_list import Selection
+
+from decision_tui.spec import SpecError, load_spec, option_id, write_answers
+
+ANSWERED = "[green]●[/green]"
+UNANSWERED = "[dim]○[/dim]"
+
+
+def _decision_md(spec: dict, decision: dict) -> str:
+    parts = [f"## {decision['question']}"]
+    if spec.get("context_md"):
+        parts.append(spec["context_md"])
+    if decision.get("context_md"):
+        parts.append(decision["context_md"])
+    options = decision.get("options") or []
+    described = [o for o in options if o.get("description")]
+    if described:
+        lines = ["### Options"]
+        for o in options:
+            rec = " — **recommended**" if o.get("recommended") else ""
+            desc = f": {o['description']}" if o.get("description") else ""
+            lines.append(f"- **{o['label']}**{rec}{desc}")
+        parts.append("\n".join(lines))
+    return "\n\n".join(parts)
+
+
+class DecisionApp(App):
+    TITLE = "Decision Dashboard"
+
+    CSS = """
+    #nav {
+        width: 34;
+        border-right: solid $primary;
+        padding: 1 0;
+    }
+    #nav ListItem {
+        padding: 0 1;
+    }
+    ContentSwitcher {
+        width: 1fr;
+    }
+    .panel {
+        padding: 0 2 1 2;
+    }
+    RadioSet, SelectionList {
+        margin: 1 0;
+        width: 100%;
+    }
+    TextArea.answer {
+        height: 8;
+        margin: 1 0;
+    }
+    Input.notes {
+        margin: 1 0 0 0;
+    }
+    """
+
+    BINDINGS = [
+        Binding("ctrl+s", "submit", "Submit all"),
+        Binding("escape", "cancel", "Cancel"),
+        Binding("ctrl+down", "next_decision", "Next"),
+        Binding("ctrl+up", "prev_decision", "Prev"),
+    ]
+
+    def __init__(self, spec: dict, answers_path: Path) -> None:
+        super().__init__()
+        self.spec = spec
+        self.answers_path = answers_path
+        self.decisions = spec["decisions"]
+        self.sub_title = spec["title"]
+
+    def compose(self) -> ComposeResult:
+        yield Header()
+        with Horizontal():
+            yield ListView(
+                *[
+                    ListItem(
+                        Label(f"{UNANSWERED} {d['question']}", id=f"navlabel-{i}", markup=True),
+                        id=f"nav-{i}",
+                    )
+                    for i, d in enumerate(self.decisions)
+                ],
+                id="nav",
+            )
+            with ContentSwitcher(initial="panel-0"):
+                for i, d in enumerate(self.decisions):
+                    with VerticalScroll(id=f"panel-{i}", classes="panel"):
+                        yield Markdown(_decision_md(self.spec, d))
+                        dtype = d.get("type", "single")
+                        if dtype == "single":
+                            yield RadioSet(
+                                *[RadioButton(o["label"]) for o in d["options"]],
+                                id=f"input-{i}",
+                            )
+                        elif dtype == "multi":
+                            yield SelectionList(
+                                *[Selection(o["label"], j) for j, o in enumerate(d["options"])],
+                                id=f"input-{i}",
+                            )
+                        else:
+                            yield TextArea(id=f"input-{i}", classes="answer")
+                        yield Input(placeholder="Notes (optional)", id=f"notes-{i}", classes="notes")
+        yield Footer()
+
+    # --- answer collection -------------------------------------------------
+
+    def _collect(self, i: int) -> dict:
+        d = self.decisions[i]
+        dtype = d.get("type", "single")
+        widget = self.query_one(f"#input-{i}")
+        notes = self.query_one(f"#notes-{i}", Input).value.strip()
+        if dtype == "single":
+            idx = widget.pressed_index
+            selected = [option_id(d["options"][idx])] if idx >= 0 else []
+        elif dtype == "multi":
+            selected = [option_id(d["options"][j]) for j in sorted(widget.selected)]
+        else:
+            text = widget.text.strip()
+            selected = [text] if text else []
+        return {"type": dtype, "selected": selected, "notes": notes}
+
+    def _refresh_nav(self) -> None:
+        for i, d in enumerate(self.decisions):
+            mark = ANSWERED if self._collect(i)["selected"] else UNANSWERED
+            self.query_one(f"#navlabel-{i}", Label).update(f"{mark} {d['question']}")
+
+    def on_radio_set_changed(self, _) -> None:
+        self._refresh_nav()
+
+    def on_selection_list_selected_changed(self, _) -> None:
+        self._refresh_nav()
+
+    def on_text_area_changed(self, _) -> None:
+        self._refresh_nav()
+
+    # --- navigation --------------------------------------------------------
+
+    def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
+        if event.item is not None:
+            index = event.item.id.removeprefix("nav-")
+            self.query_one(ContentSwitcher).current = f"panel-{index}"
+
+    def _move(self, delta: int) -> None:
+        nav = self.query_one("#nav", ListView)
+        if nav.index is not None:
+            nav.index = max(0, min(len(self.decisions) - 1, nav.index + delta))
+
+    def action_next_decision(self) -> None:
+        self._move(1)
+
+    def action_prev_decision(self) -> None:
+        self._move(-1)
+
+    # --- submit / cancel ---------------------------------------------------
+
+    def action_submit(self) -> None:
+        answers = {d["id"]: self._collect(i) for i, d in enumerate(self.decisions)}
+        missing = [
+            d["question"]
+            for d in self.decisions
+            if d.get("required", True) and not answers[d["id"]]["selected"]
+        ]
+        if missing:
+            self.notify(
+                "Unanswered: " + "; ".join(missing),
+                title="Cannot submit",
+                severity="error",
+            )
+            first = next(
+                i
+                for i, d in enumerate(self.decisions)
+                if d.get("required", True) and not answers[d["id"]]["selected"]
+            )
+            self.query_one("#nav", ListView).index = first
+            return
+        write_answers(self.answers_path, {"status": "submitted", "answers": answers})
+        self.exit()
+
+    def action_cancel(self) -> None:
+        write_answers(self.answers_path, {"status": "cancelled", "answers": {}})
+        self.exit()
+
+
+def main() -> int:
+    args = sys.argv[1:]
+    if len(args) == 2 and args[0] == "--validate":
+        try:
+            load_spec(Path(args[1]))
+        except SpecError as e:
+            print(f"INVALID: {e}", file=sys.stderr)
+            return 1
+        print("OK")
+        return 0
+    if len(args) != 2:
+        print(__doc__, file=sys.stderr)
+        return 2
+    spec_path, answers_path = Path(args[0]), Path(args[1])
+    try:
+        spec = load_spec(spec_path)
+    except SpecError as e:
+        print(f"INVALID: {e}", file=sys.stderr)
+        return 1
+
+    # If we are killed instead of submitted/cancelled (popup torn down, kill,
+    # hangup), still leave a cancelled answers file so the caller's poll ends.
+    def _bail(signum, _frame):
+        if not answers_path.exists():
+            write_answers(answers_path, {"status": "cancelled", "answers": {}})
+        sys.exit(128 + signum)
+
+    for sig in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(sig, _bail)
+
+    app = DecisionApp(spec, answers_path)
+    app.run()
+    if not answers_path.exists():
+        write_answers(answers_path, {"status": "cancelled", "answers": {}})
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Launch decision-tui as a tmux popup, serialized per client.
+#
+# tmux silently discards display-popup when the client already shows a popup
+# (exit 0, command never runs) — so concurrent dashboards would vanish without
+# a trace. flock queues them instead: each waits for the previous popup to
+# close, then displays. Callers poll their own answers file, so order is
+# irrelevant to them.
+#
+# Usage: decision-tui-popup <spec.json> <answers.json>
+set -u
+if [ $# -ne 2 ]; then
+    echo "usage: decision-tui-popup <spec.json> <answers.json>" >&2
+    exit 2
+fi
+spec=$1
+answers=$2
+if [ -z "${TMUX:-}" ]; then
+    echo "decision-tui-popup: not inside tmux" >&2
+    exit 3
+fi
+client=$(tmux display-message -p '#{client_name}' 2>/dev/null || true)
+lock="/tmp/decision-tui-popup.$(printf '%s' "$client" | tr -c 'a-zA-Z0-9' '_').lock"
+exec 9>"$lock"
+flock 9
+exec tmux display-popup -E -w 92% -h 90% "decision-tui '$spec' '$answers'"

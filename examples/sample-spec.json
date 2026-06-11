@@ -1,0 +1,33 @@
+{
+  "title": "Sample: release decisions",
+  "context_md": "Branch `release/2.4` is green on CI. Three calls needed before tagging.",
+  "decisions": [
+    {
+      "id": "deploy-strategy",
+      "question": "Deploy strategy for 2.4?",
+      "type": "single",
+      "context_md": "| Strategy | Rollback | Infra cost | Blast radius |\n|---|---|---|---|\n| Blue-green | instant flip | 2x fleet | zero |\n| Rolling | redeploy previous | none | partial |\n| Canary | instant route-away | +1 node | 5% traffic |",
+      "options": [
+        {"id": "blue-green", "label": "Blue-green", "description": "Full parallel fleet, instant cutover and rollback", "recommended": true},
+        {"id": "rolling", "label": "Rolling", "description": "In-place, no extra infra, slower rollback"},
+        {"id": "canary", "label": "Canary 5%", "description": "Route 5% for an hour, then promote"}
+      ]
+    },
+    {
+      "id": "feature-flags",
+      "question": "Which flags ship enabled?",
+      "type": "multi",
+      "options": [
+        {"id": "new-editor", "label": "New editor", "description": "Passed beta, 0 open P1s"},
+        {"id": "ai-summaries", "label": "AI summaries", "description": "2 open P2s, vendor latency unresolved"},
+        {"id": "dark-mode", "label": "Dark mode", "description": "Ready, marketing wants it in the announcement", "recommended": true}
+      ]
+    },
+    {
+      "id": "release-notes",
+      "question": "Anything to add to the release notes?",
+      "type": "text",
+      "required": false
+    }
+  ]
+}
