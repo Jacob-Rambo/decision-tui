@@ -41,6 +41,13 @@ def _option_label(option: dict) -> str:
     return option["label"] + (" ★" if option.get("recommended") else "")
 
 
+class DecisionRadio(RadioButton):
+    """Radio button drawn as (●) instead of the block-glyph ▐●▌ default."""
+
+    BUTTON_LEFT = "("
+    BUTTON_RIGHT = ")"
+
+
 def _decision_md(spec: dict, decision: dict) -> str:
     parts = [f"## {decision['question']}"]
     if spec.get("context_md"):
@@ -82,6 +89,7 @@ class DecisionApp(App):
     }
     #nav ListItem {
         padding: 0 1;
+        margin: 0 1 1 0;
     }
     ContentSwitcher {
         width: 1fr;
@@ -98,6 +106,46 @@ class DecisionApp(App):
     }
     RadioSet:focus-within, SelectionList:focus {
         border: round ansi_blue;
+        background-tint: transparent;
+    }
+    RadioSet {
+        & > RadioButton > .toggle--button {
+            background: ansi_default;
+            color: ansi_bright_black;
+        }
+        & > RadioButton.-on > .toggle--button {
+            color: ansi_green;
+            text-style: bold;
+        }
+        & > RadioButton.recommended > .toggle--label {
+            color: ansi_yellow;
+        }
+        &:focus > RadioButton.-selected > .toggle--label {
+            background: ansi_default;
+            color: ansi_default;
+            text-style: bold reverse;
+        }
+        &:blur > RadioButton.-selected > .toggle--label {
+            background: ansi_default;
+            text-style: underline;
+        }
+    }
+    SelectionList {
+        & > .selection-list--button {
+            background: ansi_default;
+            color: ansi_bright_black;
+        }
+        & > .selection-list--button-selected {
+            background: ansi_default;
+            color: ansi_green;
+        }
+        & > .selection-list--button-highlighted {
+            background: ansi_default;
+        }
+        & > .selection-list--button-selected-highlighted {
+            background: ansi_default;
+            color: ansi_green;
+        }
     }
     TextArea.answer {
         height: 8;
@@ -168,8 +216,18 @@ class DecisionApp(App):
                         dtype = d.get("type", "single")
                         if dtype == "single":
                             widget = RadioSet(
-                                *[RadioButton(_option_label(o)) for o in d["options"]],
-                                RadioButton("Other…"),
+                                *[
+                                    DecisionRadio(
+                                        _option_label(o),
+                                        classes=(
+                                            "recommended"
+                                            if o.get("recommended")
+                                            else ""
+                                        ),
+                                    )
+                                    for o in d["options"]
+                                ],
+                                DecisionRadio("Other…"),
                                 id=f"input-{i}",
                             )
                             widget.border_title = "pick one · enter selects"
