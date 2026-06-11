@@ -66,14 +66,19 @@ class DecisionApp(App):
     # the terminal/tmux theme instead of imposing Textual's.
     ansi_color = True
 
+    # Styling note: in ANSI mode (ansi_color=True) alpha blends are impossible,
+    # so Textual defaults built on them degrade — markdown table keylines
+    # ($foreground 20%) vanish and Input backgrounds ($boost) render as odd
+    # blocks. Everything here uses explicit ansi_* colors: ansi_default is the
+    # terminal's own fg/bg, so the theme still shows through.
     CSS = """
     #nav {
         width: 34;
-        border-right: tall $primary;
+        border-right: tall ansi_bright_black;
         padding: 1 0;
     }
     #nav:focus-within {
-        border-right: tall $accent;
+        border-right: tall ansi_blue;
     }
     #nav ListItem {
         padding: 0 1;
@@ -87,25 +92,40 @@ class DecisionApp(App):
     RadioSet, SelectionList {
         margin: 1 0;
         width: 100%;
-        border: round $primary;
+        border: round ansi_bright_black;
         padding: 0 1;
+        background: ansi_default;
     }
     RadioSet:focus-within, SelectionList:focus {
-        border: round $accent;
+        border: round ansi_blue;
     }
     TextArea.answer {
         height: 8;
         margin: 1 0;
-        border: round $primary;
+        border: round ansi_bright_black;
+        background: ansi_default;
     }
     TextArea.answer:focus {
-        border: round $accent;
+        border: round ansi_blue;
+    }
+    Input {
+        background: ansi_default;
+        border: tall ansi_bright_black;
+    }
+    Input:focus {
+        border: tall ansi_blue;
     }
     Input.other {
         margin: 0 0 1 0;
     }
     Input.notes {
         margin: 1 0 0 0;
+    }
+    MarkdownTableContent {
+        keyline: thin ansi_bright_black;
+    }
+    MarkdownTableContent > .header {
+        color: ansi_blue;
     }
     """
 
