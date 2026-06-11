@@ -142,11 +142,8 @@ class DecisionApp(App):
     CSS = """
     #nav {
         width: 34;
-        border-right: tall ansi_bright_black;
         padding: 1 0;
-    }
-    #nav:focus-within {
-        border-right: tall ansi_blue;
+        margin-right: 2;
     }
     #nav ListItem {
         padding: 0 1;
