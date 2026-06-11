@@ -53,6 +53,50 @@ async def run() -> None:
         await pilot.pause()
     assert json.loads(answers_path2.read_text())["status"] == "cancelled"
 
+    # Other… path: free-text answers on single and multi decisions
+    from textual.widgets import Input
+
+    from decision_tui.app import OTHER
+
+    answers_path3 = Path(tempfile.mkdtemp()) / "answers.json"
+    app3 = DecisionApp(spec, answers_path3)
+    async with app3.run_test() as pilot:
+        # decision 0 (single): pick the auto-appended Other… button (index 3)
+        radio = app3.query_one("#input-0", RadioSet)
+        buttons = radio.query("RadioButton")
+        assert len(buttons) == 4, "Other… button should be auto-appended"
+        buttons[3].value = True
+        await pilot.pause()
+        other0 = app3.query_one("#other-0", Input)
+        assert not other0.disabled, "Other input should enable when Other… is picked"
+
+        # submit with Other chosen but empty must be refused
+        app3.action_submit()
+        await pilot.pause()
+        assert not answers_path3.exists(), "empty Other text must not count as answered"
+
+        other0.value = "ship it behind a header flag"
+        # decision 1 (multi): toggle Other… alongside a real option
+        sel = app3.query_one("#input-1", SelectionList)
+        sel.select(0)
+        sel.select(OTHER)
+        await pilot.pause()
+        other1 = app3.query_one("#other-1", Input)
+        assert not other1.disabled
+        other1.value = "enable-metrics-flag"
+        await pilot.pause()
+
+        app3.action_submit()
+        await pilot.pause()
+
+    data3 = json.loads(answers_path3.read_text())
+    assert data3["status"] == "submitted", data3
+    a3 = data3["answers"]
+    assert a3["deploy-strategy"]["selected"] == [], a3
+    assert a3["deploy-strategy"]["other"] == "ship it behind a header flag", a3
+    assert a3["feature-flags"]["selected"] == ["new-editor"], a3
+    assert a3["feature-flags"]["other"] == "enable-metrics-flag", a3
+
     print("SMOKE TEST PASSED")
 
 

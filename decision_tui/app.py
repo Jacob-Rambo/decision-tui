@@ -33,6 +33,9 @@ from decision_tui.spec import SpecError, load_spec, option_id, write_answers
 ANSWERED = "[green]●[/green]"
 UNANSWERED = "[dim]○[/dim]"
 
+# value of the auto-appended free-text option on every single/multi decision
+OTHER = "__other__"
+
 
 def _option_label(option: dict) -> str:
     return option["label"] + (" ★" if option.get("recommended") else "")
@@ -98,6 +101,9 @@ class DecisionApp(App):
     TextArea.answer:focus {
         border: round $accent;
     }
+    Input.other {
+        margin: 0 0 1 0;
+    }
     Input.notes {
         margin: 1 0 0 0;
     }
@@ -143,6 +149,7 @@ class DecisionApp(App):
                         if dtype == "single":
                             widget = RadioSet(
                                 *[RadioButton(_option_label(o)) for o in d["options"]],
+                                RadioButton("Other…"),
                                 id=f"input-{i}",
                             )
                             widget.border_title = "pick one · enter selects"
@@ -152,6 +159,7 @@ class DecisionApp(App):
                                     Selection(_option_label(o), j)
                                     for j, o in enumerate(d["options"])
                                 ],
+                                Selection("Other…", OTHER),
                                 id=f"input-{i}",
                             )
                             widget.border_title = "pick any · space toggles"
@@ -159,6 +167,13 @@ class DecisionApp(App):
                             widget = TextArea(id=f"input-{i}", classes="answer")
                             widget.border_title = "free text"
                         yield widget
+                        if dtype in ("single", "multi"):
+                            yield Input(
+                                placeholder="Other — type your own answer",
+                                id=f"other-{i}",
+                                classes="other",
+                                disabled=True,
+                            )
                         yield Input(
                             placeholder="Notes (optional)",
                             id=f"notes-{i}",
@@ -173,18 +188,29 @@ class DecisionApp(App):
         dtype = d.get("type", "single")
         widget = self.query_one(f"#input-{i}")
         notes = self.query_one(f"#notes-{i}", Input).value.strip()
+        other = ""
         if dtype == "single":
             idx = widget.pressed_index
-            selected = [option_id(d["options"][idx])] if idx >= 0 else []
+            if idx == len(d["options"]):  # the auto-appended Other… button
+                selected = []
+                other = self.query_one(f"#other-{i}", Input).value.strip()
+            elif idx >= 0:
+                selected = [option_id(d["options"][idx])]
+            else:
+                selected = []
         elif dtype == "multi":
-            selected = [option_id(d["options"][j]) for j in sorted(widget.selected)]
+            picked = sorted(v for v in widget.selected if isinstance(v, int))
+            selected = [option_id(d["options"][j]) for j in picked]
+            if OTHER in widget.selected:
+                other = self.query_one(f"#other-{i}", Input).value.strip()
         else:
             text = widget.text.strip()
             selected = [text] if text else []
-        return {"type": dtype, "selected": selected, "notes": notes}
+        return {"type": dtype, "selected": selected, "other": other, "notes": notes}
 
     def _answered(self, i: int) -> bool:
-        return bool(self._collect(i)["selected"])
+        answer = self._collect(i)
+        return bool(answer["selected"] or answer["other"])
 
     def _refresh_nav(self) -> None:
         n = 0
@@ -205,19 +231,49 @@ class DecisionApp(App):
         return next((j for j in order if not self._answered(j)), None)
 
     def on_radio_set_changed(self, event: RadioSet.Changed) -> None:
+        idx = int(event.radio_set.id.removeprefix("input-"))
+        other_input = self.query_one(f"#other-{idx}", Input)
+        if event.radio_set.pressed_index == len(self.decisions[idx]["options"]):
+            # Other… chosen: open the text field and wait for typing
+            other_input.disabled = False
+            other_input.focus()
+            self._refresh_nav()
+            return
+        other_input.disabled = True
         self._refresh_nav()
         # fast keyboard flow: picking an option advances to the next
         # unanswered decision (notes stay reachable by navigating back)
-        idx = int(event.radio_set.id.removeprefix("input-"))
         nxt = self._next_unanswered(idx)
         if nxt is not None:
             self._goto(nxt, focus_input=True)
 
-    def on_selection_list_selected_changed(self, _) -> None:
+    def on_selection_list_selected_changed(
+        self, event: SelectionList.SelectedChanged
+    ) -> None:
+        idx = int(event.selection_list.id.removeprefix("input-"))
+        other_input = self.query_one(f"#other-{idx}", Input)
+        wants_other = OTHER in event.selection_list.selected
+        if wants_other and other_input.disabled:
+            other_input.disabled = False
+            other_input.focus()
+        elif not wants_other:
+            other_input.disabled = True
         self._refresh_nav()
 
     def on_text_area_changed(self, _) -> None:
         self._refresh_nav()
+
+    def on_input_changed(self, _) -> None:
+        # typing in an Other… field changes answered state live
+        self._refresh_nav()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        # enter in a filled Other… field advances like picking an option does
+        if event.input.id and event.input.id.startswith("other-") and event.input.value.strip():
+            idx = int(event.input.id.removeprefix("other-"))
+            nxt = self._next_unanswered(idx)
+            if nxt is not None:
+                self._goto(nxt, focus_input=True)
 
     # --- navigation --------------------------------------------------------
 
@@ -251,22 +307,19 @@ class DecisionApp(App):
 
     def action_submit(self) -> None:
         answers = {d["id"]: self._collect(i) for i, d in enumerate(self.decisions)}
-        missing = [
-            d["question"]
-            for d in self.decisions
-            if d.get("required", True) and not answers[d["id"]]["selected"]
-        ]
+
+        def unanswered(d):
+            a = answers[d["id"]]
+            return d.get("required", True) and not (a["selected"] or a["other"])
+
+        missing = [d["question"] for d in self.decisions if unanswered(d)]
         if missing:
             self.notify(
                 "Unanswered: " + "; ".join(missing),
                 title="Cannot submit",
                 severity="error",
             )
-            first = next(
-                i
-                for i, d in enumerate(self.decisions)
-                if d.get("required", True) and not answers[d["id"]]["selected"]
-            )
+            first = next(i for i, d in enumerate(self.decisions) if unanswered(d))
             self._goto(first, focus_input=True)
             return
         write_answers(self.answers_path, {"status": "submitted", "answers": answers})

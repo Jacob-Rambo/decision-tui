@@ -24,6 +24,10 @@ A spec is a JSON document:
   ]
 }
 
+Every single/multi decision automatically gets an "Other…" free-text option
+appended by the renderer (like AskUserQuestion) — never define your own Other
+option in a spec.
+
 Answers are written as:
 
 {
@@ -32,10 +36,14 @@ Answers are written as:
     "<decision id>": {
       "type": "single",
       "selected": ["blue-green"],            # option ids; for text: [<the text>]
+      "other": "",                           # text typed into the Other… option, if chosen
       "notes": "free-form note or empty"
     }
   }
 }
+
+A required decision counts as answered when selected is non-empty OR other is
+non-empty.
 """
 
 import json
