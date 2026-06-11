@@ -34,6 +34,10 @@ ANSWERED = "[green]●[/green]"
 UNANSWERED = "[dim]○[/dim]"
 
 
+def _option_label(option: dict) -> str:
+    return option["label"] + (" ★" if option.get("recommended") else "")
+
+
 def _decision_md(spec: dict, decision: dict) -> str:
     parts = [f"## {decision['question']}"]
     if spec.get("context_md"):
@@ -45,7 +49,7 @@ def _decision_md(spec: dict, decision: dict) -> str:
     if described:
         lines = ["### Options"]
         for o in options:
-            rec = " — **recommended**" if o.get("recommended") else ""
+            rec = " — **recommended ★**" if o.get("recommended") else ""
             desc = f": {o['description']}" if o.get("description") else ""
             lines.append(f"- **{o['label']}**{rec}{desc}")
         parts.append("\n".join(lines))
@@ -55,11 +59,18 @@ def _decision_md(spec: dict, decision: dict) -> str:
 class DecisionApp(App):
     TITLE = "Decision Dashboard"
 
+    # Render with the terminal's own ANSI palette so the dashboard inherits
+    # the terminal/tmux theme instead of imposing Textual's.
+    ansi_color = True
+
     CSS = """
     #nav {
         width: 34;
-        border-right: solid $primary;
+        border-right: tall $primary;
         padding: 1 0;
+    }
+    #nav:focus-within {
+        border-right: tall $accent;
     }
     #nav ListItem {
         padding: 0 1;
@@ -73,10 +84,19 @@ class DecisionApp(App):
     RadioSet, SelectionList {
         margin: 1 0;
         width: 100%;
+        border: round $primary;
+        padding: 0 1;
+    }
+    RadioSet:focus-within, SelectionList:focus {
+        border: round $accent;
     }
     TextArea.answer {
         height: 8;
         margin: 1 0;
+        border: round $primary;
+    }
+    TextArea.answer:focus {
+        border: round $accent;
     }
     Input.notes {
         margin: 1 0 0 0;
@@ -85,7 +105,7 @@ class DecisionApp(App):
 
     BINDINGS = [
         Binding("ctrl+s", "submit", "Submit all"),
-        Binding("escape", "cancel", "Cancel"),
+        Binding("escape", "cancel", "Back / Cancel"),
         Binding("ctrl+down", "next_decision", "Next"),
         Binding("ctrl+up", "prev_decision", "Prev"),
     ]
@@ -95,7 +115,8 @@ class DecisionApp(App):
         self.spec = spec
         self.answers_path = answers_path
         self.decisions = spec["decisions"]
-        self.sub_title = spec["title"]
+        self._all_answered_notified = False
+        self.sub_title = f"{spec['title']} · 0/{len(self.decisions)} answered"
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -103,7 +124,11 @@ class DecisionApp(App):
             yield ListView(
                 *[
                     ListItem(
-                        Label(f"{UNANSWERED} {d['question']}", id=f"navlabel-{i}", markup=True),
+                        Label(
+                            f"{UNANSWERED} {i + 1}. {d['question']}",
+                            id=f"navlabel-{i}",
+                            markup=True,
+                        ),
                         id=f"nav-{i}",
                     )
                     for i, d in enumerate(self.decisions)
@@ -116,18 +141,29 @@ class DecisionApp(App):
                         yield Markdown(_decision_md(self.spec, d))
                         dtype = d.get("type", "single")
                         if dtype == "single":
-                            yield RadioSet(
-                                *[RadioButton(o["label"]) for o in d["options"]],
+                            widget = RadioSet(
+                                *[RadioButton(_option_label(o)) for o in d["options"]],
                                 id=f"input-{i}",
                             )
+                            widget.border_title = "pick one · enter selects"
                         elif dtype == "multi":
-                            yield SelectionList(
-                                *[Selection(o["label"], j) for j, o in enumerate(d["options"])],
+                            widget = SelectionList(
+                                *[
+                                    Selection(_option_label(o), j)
+                                    for j, o in enumerate(d["options"])
+                                ],
                                 id=f"input-{i}",
                             )
+                            widget.border_title = "pick any · space toggles"
                         else:
-                            yield TextArea(id=f"input-{i}", classes="answer")
-                        yield Input(placeholder="Notes (optional)", id=f"notes-{i}", classes="notes")
+                            widget = TextArea(id=f"input-{i}", classes="answer")
+                            widget.border_title = "free text"
+                        yield widget
+                        yield Input(
+                            placeholder="Notes (optional)",
+                            id=f"notes-{i}",
+                            classes="notes",
+                        )
         yield Footer()
 
     # --- answer collection -------------------------------------------------
@@ -147,13 +183,35 @@ class DecisionApp(App):
             selected = [text] if text else []
         return {"type": dtype, "selected": selected, "notes": notes}
 
-    def _refresh_nav(self) -> None:
-        for i, d in enumerate(self.decisions):
-            mark = ANSWERED if self._collect(i)["selected"] else UNANSWERED
-            self.query_one(f"#navlabel-{i}", Label).update(f"{mark} {d['question']}")
+    def _answered(self, i: int) -> bool:
+        return bool(self._collect(i)["selected"])
 
-    def on_radio_set_changed(self, _) -> None:
+    def _refresh_nav(self) -> None:
+        n = 0
+        for i, d in enumerate(self.decisions):
+            answered = self._answered(i)
+            n += answered
+            mark = ANSWERED if answered else UNANSWERED
+            self.query_one(f"#navlabel-{i}", Label).update(
+                f"{mark} {i + 1}. {d['question']}"
+            )
+        self.sub_title = f"{self.spec['title']} · {n}/{len(self.decisions)} answered"
+        if not self._all_answered_notified and n == len(self.decisions):
+            self._all_answered_notified = True
+            self.notify("All answered — ctrl+s to submit", severity="information")
+
+    def _next_unanswered(self, after: int) -> int | None:
+        order = list(range(after + 1, len(self.decisions))) + list(range(0, after))
+        return next((j for j in order if not self._answered(j)), None)
+
+    def on_radio_set_changed(self, event: RadioSet.Changed) -> None:
         self._refresh_nav()
+        # fast keyboard flow: picking an option advances to the next
+        # unanswered decision (notes stay reachable by navigating back)
+        idx = int(event.radio_set.id.removeprefix("input-"))
+        nxt = self._next_unanswered(idx)
+        if nxt is not None:
+            self._goto(nxt, focus_input=True)
 
     def on_selection_list_selected_changed(self, _) -> None:
         self._refresh_nav()
@@ -163,10 +221,20 @@ class DecisionApp(App):
 
     # --- navigation --------------------------------------------------------
 
+    def _goto(self, index: int, focus_input: bool = False) -> None:
+        self.query_one("#nav", ListView).index = index
+        if focus_input:
+            self.query_one(f"#input-{index}").focus()
+
     def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
         if event.item is not None:
             index = event.item.id.removeprefix("nav-")
             self.query_one(ContentSwitcher).current = f"panel-{index}"
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        # enter on a sidebar entry dives into that decision's input
+        index = int(event.item.id.removeprefix("nav-"))
+        self.query_one(f"#input-{index}").focus()
 
     def _move(self, delta: int) -> None:
         nav = self.query_one("#nav", ListView)
@@ -199,12 +267,18 @@ class DecisionApp(App):
                 for i, d in enumerate(self.decisions)
                 if d.get("required", True) and not answers[d["id"]]["selected"]
             )
-            self.query_one("#nav", ListView).index = first
+            self._goto(first, focus_input=True)
             return
         write_answers(self.answers_path, {"status": "submitted", "answers": answers})
         self.exit()
 
     def action_cancel(self) -> None:
+        # two-stage escape: back out to the sidebar first; cancel the whole
+        # dashboard only from the sidebar (prevents accidental cancels)
+        nav = self.query_one("#nav", ListView)
+        if self.focused is not None and self.focused is not nav:
+            nav.focus()
+            return
         write_answers(self.answers_path, {"status": "cancelled", "answers": {}})
         self.exit()
 
