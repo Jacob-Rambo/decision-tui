@@ -9,9 +9,15 @@ import signal
 import sys
 from pathlib import Path
 
+from rich.segment import Segment
+from rich.style import Style as RichStyle
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, VerticalScroll
+from textual.content import Content
+from textual.strip import Strip
+from textual.widgets import OptionList
+from textual.widgets.option_list import OptionDoesNotExist
 from textual.widgets import (
     ContentSwitcher,
     Footer,
@@ -42,10 +48,65 @@ def _option_label(option: dict) -> str:
 
 
 class DecisionRadio(RadioButton):
-    """Radio button drawn as (●) instead of the block-glyph ▐●▌ default."""
+    """Radio button drawn as ( ) / (●) instead of the block-glyph ▐●▌ default.
+
+    Overrides _button because ToggleButton colors the side glyphs with
+    *background* colors (a trick for the half-block ▐▌ characters) which makes
+    text glyphs like parens invisible — and because the default draws the same
+    inner char for both states, signalling state by color alone.
+    """
 
     BUTTON_LEFT = "("
     BUTTON_RIGHT = ")"
+
+    @property
+    def _button(self) -> Content:
+        button_style = self.get_visual_style("toggle--button")
+        inner = self.BUTTON_INNER if self.value else " "
+        return Content.assemble(
+            (self.BUTTON_LEFT, button_style),
+            (inner, button_style),
+            (self.BUTTON_RIGHT, button_style),
+        )
+
+
+class DecisionSelect(SelectionList):
+    """Selection list drawn as [ ] / [x] to match the radio glyphs.
+
+    Same reasoning as DecisionRadio: the stock SelectionList draws block-glyph
+    checkboxes with bg-colored sides and a state-independent inner char.
+    """
+
+    def _get_left_gutter_width(self) -> int:
+        return 4  # len("[x] ")
+
+    def render_line(self, y: int) -> Strip:
+        line = OptionList.render_line(self, y)
+        _, scroll_y = self.scroll_offset
+        index = scroll_y + y
+        try:
+            selection = self.get_option_at_index(index)
+        except OptionDoesNotExist:
+            return line
+        is_selected = selection.value in self._selected
+        component_style = "selection-list--button"
+        if is_selected:
+            component_style += "-selected"
+        if self.highlighted == index:
+            component_style += "-highlighted"
+        underlying_style = next(iter(line)).style or self.rich_style
+        glyph_style = self.get_component_rich_style(component_style) + RichStyle(
+            meta={"option": index}
+        )
+        return Strip(
+            [
+                Segment("[", style=glyph_style),
+                Segment("x" if is_selected else " ", style=glyph_style),
+                Segment("]", style=glyph_style),
+                Segment(" ", style=underlying_style),
+                *line,
+            ]
+        )
 
 
 def _decision_md(spec: dict, decision: dict) -> str:
@@ -240,7 +301,7 @@ class DecisionApp(App):
                             )
                             widget.border_title = "true / false"
                         elif dtype == "multi":
-                            widget = SelectionList(
+                            widget = DecisionSelect(
                                 *[
                                     Selection(_option_label(o), j)
                                     for j, o in enumerate(d["options"])
