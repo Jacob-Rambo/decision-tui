@@ -11,7 +11,7 @@ A spec is a JSON document:
       "question": "Which deploy strategy?",  # required
       "type": "single",                      # single | multi | bool | text (default: single)
       "required": true,                      # default true
-      "labels": ["True", "False"],           # bool only, optional: display labels for the pair
+      "label": "Tag as stable",              # bool only, optional: checkbox row text (default "Yes")
       "context_md": "markdown: tables, comparisons, evidence",  # optional
       "options": [                           # required for single/multi
         {
@@ -29,10 +29,12 @@ Every single/multi decision automatically gets an "Other…" free-text option
 appended by the renderer (like AskUserQuestion) — never define your own Other
 option in a spec.
 
-bool decisions take no options: they render as a True/False radio pair (display
-labels overridable via "labels") and answer with canonical "true"/"false" ids
-regardless of the labels. No Other option — a bool is a closed proposition;
-nuance goes in notes.
+bool decisions take no options: they render as a single checkbox row (text
+overridable via "label") and always answer with canonical "true"/"false" —
+checked is "true", unchecked is "false". A checkbox is never unanswered, so
+"required" has no effect on bools and the default outcome is false. No Other
+option — a bool is a closed proposition; nuance goes in notes. If a decision
+must force an explicit choice, use single with two options instead.
 
 Answers are written as:
 
@@ -95,13 +97,9 @@ def validate_spec(spec: dict) -> None:
         if dtype not in VALID_TYPES:
             raise SpecError(f"{where}.type must be one of {VALID_TYPES}, got {dtype!r}")
         if dtype == "bool":
-            labels = d.get("labels")
-            if labels is not None and (
-                not isinstance(labels, list)
-                or len(labels) != 2
-                or not all(isinstance(s, str) and s for s in labels)
-            ):
-                raise SpecError(f"{where}.labels must be two non-empty strings")
+            label = d.get("label")
+            if label is not None and (not isinstance(label, str) or not label):
+                raise SpecError(f"{where}.label must be a non-empty string")
         if dtype in ("single", "multi"):
             options = d.get("options")
             if not isinstance(options, list) or not options:

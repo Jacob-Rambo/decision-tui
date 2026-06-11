@@ -293,13 +293,11 @@ class DecisionApp(App):
                             )
                             widget.border_title = "pick one · enter selects"
                         elif dtype == "bool":
-                            labels = d.get("labels") or ["True", "False"]
-                            widget = RadioSet(
-                                DecisionRadio(labels[0]),
-                                DecisionRadio(labels[1]),
+                            widget = DecisionSelect(
+                                Selection(d.get("label") or "Yes", "true"),
                                 id=f"input-{i}",
                             )
-                            widget.border_title = "true / false"
+                            widget.border_title = "check = true · space toggles"
                         elif dtype == "multi":
                             widget = DecisionSelect(
                                 *[
@@ -328,6 +326,11 @@ class DecisionApp(App):
                         )
         yield Footer()
 
+    def on_mount(self) -> None:
+        # bools count as answered (false) from the start — sync the sidebar
+        # dots and header count with reality before any interaction
+        self._refresh_nav()
+
     # --- answer collection -------------------------------------------------
 
     def _collect(self, i: int) -> dict:
@@ -346,8 +349,8 @@ class DecisionApp(App):
             else:
                 selected = []
         elif dtype == "bool":
-            idx = widget.pressed_index
-            selected = [("true", "false")[idx]] if idx >= 0 else []
+            # a checkbox is never unanswered: unchecked IS false
+            selected = ["true"] if "true" in widget.selected else ["false"]
         elif dtype == "multi":
             picked = sorted(v for v in widget.selected if isinstance(v, int))
             selected = [option_id(d["options"][j]) for j in picked]
@@ -403,13 +406,14 @@ class DecisionApp(App):
         self, event: SelectionList.SelectedChanged
     ) -> None:
         idx = int(event.selection_list.id.removeprefix("input-"))
-        other_input = self.query_one(f"#other-{idx}", Input)
-        wants_other = OTHER in event.selection_list.selected
-        if wants_other and other_input.disabled:
-            other_input.disabled = False
-            other_input.focus()
-        elif not wants_other:
-            other_input.disabled = True
+        if self.decisions[idx].get("type", "single") == "multi":  # bools have no Other…
+            other_input = self.query_one(f"#other-{idx}", Input)
+            wants_other = OTHER in event.selection_list.selected
+            if wants_other and other_input.disabled:
+                other_input.disabled = False
+                other_input.focus()
+            elif not wants_other:
+                other_input.disabled = True
         self._refresh_nav()
 
     def on_text_area_changed(self, _) -> None:

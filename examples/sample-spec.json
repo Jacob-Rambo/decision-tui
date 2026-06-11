@@ -27,6 +27,7 @@
       "id": "tag-stable",
       "question": "Tag this build as stable?",
       "type": "bool",
+      "label": "Tag as stable",
       "context_md": "Stable tags are what the auto-updater offers to clients. The last stable was 2.3.7."
     },
     {
