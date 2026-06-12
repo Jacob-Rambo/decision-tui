@@ -1,0 +1,105 @@
+---
+name: decision-dashboard
+description: Present multiple decisions to Jake as an interactive TUI dashboard (tmux popup overlay by default, split pane when the conversation must stay visible) instead of walls of terminal text. Use when a task reaches a point requiring 2+ user decisions, or one decision with dense comparative context (tables, tradeoffs, evidence). Renders a JSON decision spec via decision-tui, collects structured answers. Falls back to AskUserQuestion outside tmux.
+---
+
+# Decision Dashboard
+
+When you need Jake to make multiple decisions — or one decision with dense context — do not dump them as prose in the conversation. Render them as an interactive dashboard in a tmux split pane using `decision-tui`, and read his answers back as JSON.
+
+## Preconditions
+
+- `$TMUX` must be set (it is inherited by your Bash subprocesses when Claude Code runs inside tmux). If `$TMUX` is empty, **fall back to the AskUserQuestion tool** — do not attempt the pane.
+- `decision-tui` is on PATH at `~/.local/bin/decision-tui` (source: `/mnt/general-storage/repos/decision-tui`).
+
+## Flow
+
+1. **Write the spec.** Create a JSON decision spec (schema below) at a unique temp path, e.g. `/tmp/decisions-<topic>-$$.json`. Put real substance in `context_md` — comparison tables, evidence, file references. The markdown is the dashboard's whole value; the option list is just the input control.
+
+2. **Validate it** (a malformed spec opens a broken pane in Jake's face):
+   ```bash
+   decision-tui --validate /tmp/decisions-X.json
+   ```
+
+3. **Present it.** Default to a modal popup overlay — it floats over the Claude Code session, grabs focus, and disappears on submit/cancel, returning Jake exactly where he was. Always launch via `decision-tui-popup` (NEVER raw `tmux display-popup` — tmux silently discards a popup when the client already shows one: exit 0, command never runs, answers file never appears; the launcher serializes popups per client with flock so concurrent dashboards queue and appear one after another). Background the launch (`&`) — it blocks until the popup closes:
+   ```bash
+   ANSWERS=/tmp/answers-X.json
+   rm -f "$ANSWERS"
+   decision-tui-popup /tmp/decisions-X.json "$ANSWERS" >/tmp/popup-launch.log 2>&1 &
+   ```
+   Use a **split pane** instead when Jake needs the conversation visible while deciding (e.g. the decisions reference output above):
+   ```bash
+   tmux split-window -h -l 55% "decision-tui /tmp/decisions-X.json $ANSWERS"
+   ```
+   For a full-screen takeover that snaps back afterwards, add zoom to the split: `tmux split-window -h "decision-tui spec answers" \; resize-pane -Z`.
+
+4. **Tell Jake** in one short line that the dashboard is open (keys: arrows to navigate decisions, `ctrl+s` submit, `esc` cancel).
+
+5. **Poll for the answers file.** Loop with `sleep`, total wait under ~8 minutes per Bash call (harness kills at ~10 min); if he hasn't answered, just poll again in a fresh call — do not give up:
+   ```bash
+   for i in $(seq 1 90); do [ -f "$ANSWERS" ] && break; sleep 5; done; cat "$ANSWERS" 2>/dev/null || echo "NOT_ANSWERED_YET"
+   ```
+
+6. **Act on the answers.** `status` is `submitted` or `cancelled`. On `cancelled`, ask Jake how he wants to proceed in plain conversation. Clean up the temp files afterwards.
+
+## Concurrency
+
+- **Popups queue.** Multiple dashboards triggered at once (parallel subagents, overlapping skills) appear one at a time per tmux client — `decision-tui-popup`'s flock guarantees it. Each caller polls its own answers file, so order doesn't matter.
+- **Split panes coexist** — multiple `split-window` dashboards open side by side; fine for 2, cramped beyond that.
+- Every termination path writes an answers file (`submitted`, or `cancelled` on esc/kill/popup teardown — the app traps SIGTERM/SIGHUP), so polling always terminates. Still keep the per-call poll under ~8 minutes and re-poll in a fresh Bash call.
+- Answers paths must be unique per dashboard (the `$$`/topic naming above guarantees this); two dashboards sharing one answers file would corrupt the handshake.
+
+## Spec schema
+
+```json
+{
+  "title": "short dashboard title",
+  "context_md": "optional markdown shown on every decision panel",
+  "decisions": [
+    {
+      "id": "unique-slug",
+      "question": "The question?",
+      "type": "single | multi | text",
+      "required": true,
+      "context_md": "markdown: tables, tradeoffs, evidence. Make this dense and useful.",
+      "options": [
+        {"id": "slug", "label": "Short label", "description": "tradeoffs / why", "recommended": false}
+      ]
+    }
+  ]
+}
+```
+
+- `type` defaults to `single`. `options` is required for `single`/`multi`, ignored for `bool`/`text`.
+- `bool` renders a single checkbox row (set its text with `"label": "Ship it"`, default "Yes") and always answers with canonical `"true"`/`"false"` — checked is true, unchecked is false. A checkbox is never unanswered: `required` has no effect and the default outcome is `false`. Use it for yes/no calls; if Jake must be forced to choose explicitly, use a two-option `single` instead. No Other option; nuance arrives in `notes`.
+- `required` defaults to `true`; submit is blocked until all required decisions are answered.
+- Every `single`/`multi` decision automatically gets an "Other…" free-text option appended by the renderer — NEVER define your own Other/custom/escape-hatch option in a spec.
+- Mark at most one option per decision `recommended` — and only when you genuinely recommend it.
+- Per Jake's global rules: no time estimates anywhere in the spec; frame options by structural tradeoffs (scope, reversibility, blast radius, what each enables next), never by effort or difficulty.
+
+## Answers format
+
+```json
+{
+  "status": "submitted",
+  "answers": {
+    "unique-slug": {"type": "single", "selected": ["slug"], "other": "", "notes": "optional free text Jake typed"}
+  }
+}
+```
+
+- `selected` holds option ids (for `text`: a single-element array with the text, empty if blank).
+- `other` holds text Jake typed into the automatic "Other…" option — when non-empty, it IS his answer (for `single`, `selected` will be empty; for `multi`, it adds to any selected options). Treat it with the same weight as a listed option.
+- Always read `notes` — Jake uses it to qualify or override an option.
+
+## Example
+
+A working sample spec lives at `/mnt/general-storage/repos/decision-tui/examples/sample-spec.json`.
+
+For the canonical dense use case — batch ticket triage where each decision carries the original ticket, comment thread, work history, and proposed fix — imitate `/mnt/general-storage/repos/decision-tui/examples/ticket-triage.json`: metadata table first, then `### Original ticket` (blockquoted), `### Comments` (blockquoted, attributed, dated), `### Work history` (bullets ending in the agent's confidence/recommendation), `### Proposed fix` (fenced code). Per-ticket disposition decisions first, then batch-level decisions (release bundle as `multi`, flags as `bool`, free-form notes as `text`) that reference the earlier ones.
+
+Demo the simple spec with:
+
+```bash
+decision-tui-popup /mnt/general-storage/repos/decision-tui/examples/sample-spec.json /tmp/demo-answers.json &
+```
