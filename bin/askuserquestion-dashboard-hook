@@ -1,0 +1,167 @@
+#!/usr/bin/env python3
+"""PreToolUse hook: route dense AskUserQuestion calls to the decision dashboard.
+
+Receives the PreToolUse payload on stdin. For dense question sets (2+ questions,
+any question with 4+ options, or any option carrying a preview) it renders the
+questions in decision-tui as a tmux popup, blocks while Jake answers, and
+returns a deny whose reason carries the answers — the model treats them as the
+user's reply and proceeds. Sparse questions, cancels, missing tmux, or any
+failure fall through to the native AskUserQuestion UI via allow.
+
+Every run appends a line to /tmp/auq-hook.log for diagnosis.
+"""
+
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import time
+
+LOG = "/tmp/auq-hook.log"
+HERE = os.path.dirname(os.path.abspath(__file__))
+LAUNCHER = os.path.join(HERE, "decision-tui-popup")
+RECOMMENDED_SUFFIX = " (Recommended)"
+# stay under the hook timeout (600s in settings) so we exit gracefully
+POPUP_BUDGET_SECONDS = 550
+
+
+def log(msg: str) -> None:
+    try:
+        with open(LOG, "a") as f:
+            f.write(f"[{time.strftime('%F %T')}] {msg}\n")
+    except OSError:
+        pass
+
+
+def respond(decision: str, reason: str = "") -> None:
+    out = {
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": decision,
+        }
+    }
+    if reason:
+        out["hookSpecificOutput"]["permissionDecisionReason"] = reason
+    print(json.dumps(out))
+    sys.exit(0)
+
+
+def allow(why: str) -> None:
+    log(f"allow (native UI): {why}")
+    respond("allow")
+
+
+def is_dense(questions: list) -> bool:
+    if len(questions) >= 2:
+        return True
+    for q in questions:
+        options = q.get("options") or []
+        if len(options) >= 4:
+            return True
+        if any(o.get("preview") for o in options):
+            return True
+    return False
+
+
+def build_spec(questions: list) -> dict:
+    decisions = []
+    for i, q in enumerate(questions):
+        options = []
+        previews = []
+        for o in q.get("options") or []:
+            label = o.get("label", "")
+            recommended = label.endswith(RECOMMENDED_SUFFIX)
+            clean = label[: -len(RECOMMENDED_SUFFIX)] if recommended else label
+            opt = {"label": clean}
+            if o.get("description"):
+                opt["description"] = o["description"]
+            if recommended:
+                opt["recommended"] = True
+            options.append(opt)
+            if o.get("preview"):
+                previews.append(f"### {clean}\n\n{o['preview']}")
+        decision = {
+            "id": f"q{i + 1}",
+            "question": q.get("question", f"Question {i + 1}"),
+            "type": "multi" if q.get("multiSelect") else "single",
+            "options": options,
+        }
+        if previews:
+            decision["context_md"] = "\n\n".join(previews)
+        decisions.append(decision)
+    return {"title": "Questions from Claude", "decisions": decisions}
+
+
+def format_answers(questions: list, answers: dict) -> str:
+    lines = []
+    for i, q in enumerate(questions):
+        a = answers.get(f"q{i + 1}") or {}
+        chosen = ", ".join(a.get("selected") or [])
+        parts = [chosen] if chosen else []
+        if a.get("other"):
+            parts.append(f'their own answer: "{a["other"]}"')
+        answer = "; ".join(parts) if parts else "(no selection)"
+        lines.append(f'{i + 1}. "{q.get("question", "")}" -> {answer}')
+        if a.get("notes"):
+            lines.append(f'   notes: {a["notes"]}')
+    return "\n".join(lines)
+
+
+def main() -> None:
+    try:
+        payload = json.load(sys.stdin)
+    except Exception as e:
+        allow(f"unparseable stdin: {e}")
+    questions = (payload.get("tool_input") or {}).get("questions") or []
+    if not questions:
+        allow("no questions in tool_input")
+    if not is_dense(questions):
+        allow(f"below density threshold ({len(questions)} question(s))")
+    if not os.environ.get("TMUX"):
+        allow("TMUX not set in hook environment")
+
+    fd, spec_path = tempfile.mkstemp(prefix="auq-spec-", suffix=".json")
+    with os.fdopen(fd, "w") as f:
+        json.dump(build_spec(questions), f)
+    answers_path = spec_path.replace("auq-spec-", "auq-answers-")
+
+    try:
+        proc = subprocess.run(
+            [LAUNCHER, spec_path, answers_path],
+            capture_output=True,
+            text=True,
+            timeout=POPUP_BUDGET_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        allow("dashboard not answered within hook budget")
+    if proc.returncode != 0:
+        allow(f"launcher failed rc={proc.returncode}: {proc.stderr.strip()[:200]}")
+
+    try:
+        result = json.load(open(answers_path))
+    except Exception as e:
+        allow(f"unreadable answers file: {e}")
+    finally:
+        for p in (spec_path, answers_path):
+            try:
+                os.unlink(p)
+            except OSError:
+                pass
+
+    if result.get("status") != "submitted":
+        allow("user cancelled the dashboard")
+
+    log(f"deny with {len(questions)} answered question(s)")
+    respond(
+        "deny",
+        "The user already answered these questions in the decision dashboard "
+        "(do not show them again). Their answers:\n\n"
+        + format_answers(questions, result.get("answers") or {})
+        + "\n\nTreat these as the user's final, authoritative answers. "
+        "Do NOT call AskUserQuestion again for these questions — proceed with the work.",
+    )
+
+
+if __name__ == "__main__":
+    main()
