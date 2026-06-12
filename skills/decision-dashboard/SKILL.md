@@ -1,6 +1,8 @@
 ---
 name: decision-dashboard
 description: Present multiple decisions to Jake as an interactive TUI dashboard (tmux popup overlay by default, split pane when the conversation must stay visible) instead of walls of terminal text. Use when a task reaches a point requiring 2+ user decisions, or one decision with dense comparative context (tables, tradeoffs, evidence). Renders a JSON decision spec via decision-tui, collects structured answers. Falls back to AskUserQuestion outside tmux.
+user_invocable: true
+trigger: when a task reaches a multi-decision checkpoint, when Jake asks for a decision dashboard, or when dense comparative context (tickets, tradeoff tables, batch dispositions) needs structured answers
 ---
 
 # Decision Dashboard
