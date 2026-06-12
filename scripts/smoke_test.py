@@ -58,8 +58,6 @@ async def run() -> None:
     assert json.loads(answers_path2.read_text())["status"] == "cancelled"
 
     # Other… path: free-text answers on single and multi decisions
-    from textual.widgets import Input
-
     from decision_tui.app import OTHER
 
     answers_path3 = Path(tempfile.mkdtemp()) / "answers.json"
@@ -71,7 +69,7 @@ async def run() -> None:
         assert len(buttons) == 4, "Other… button should be auto-appended"
         buttons[3].value = True
         await pilot.pause()
-        other0 = app3.query_one("#other-0", Input)
+        other0 = app3.query_one("#other-0", TextArea)
         assert not other0.disabled, "Other input should enable when Other… is picked"
 
         # submit with Other chosen but empty must be refused
@@ -79,15 +77,15 @@ async def run() -> None:
         await pilot.pause()
         assert not answers_path3.exists(), "empty Other text must not count as answered"
 
-        other0.value = "ship it behind a header flag"
+        other0.text = "ship it behind a header flag"
         # decision 1 (multi): toggle Other… alongside a real option
         sel = app3.query_one("#input-1", SelectionList)
         sel.select(0)
         sel.select(OTHER)
         await pilot.pause()
-        other1 = app3.query_one("#other-1", Input)
+        other1 = app3.query_one("#other-1", TextArea)
         assert not other1.disabled
-        other1.value = "enable-metrics-flag"
+        other1.text = "enable-metrics-flag"
         # decision 2 (bool): check the box → true
         app3.query_one("#input-2", SelectionList).select("true")
         await pilot.pause()

@@ -22,7 +22,6 @@ from textual.widgets import (
     ContentSwitcher,
     Footer,
     Header,
-    Input,
     Label,
     ListItem,
     ListView,
@@ -214,18 +213,19 @@ class DecisionApp(App):
     TextArea.answer:focus {
         border: round ansi_blue;
     }
-    Input {
+    TextArea.other, TextArea.notes {
+        height: 4;
         background: ansi_default;
-        border: tall ansi_bright_black;
+        border: round ansi_bright_black;
     }
-    Input:focus {
-        border: tall ansi_blue;
-    }
-    Input.other {
+    TextArea.other {
         margin: 0 0 1 0;
     }
-    Input.notes {
+    TextArea.notes {
         margin: 1 0 0 0;
+    }
+    TextArea.other:focus, TextArea.notes:focus {
+        border: round ansi_blue;
     }
     MarkdownTableContent {
         keyline: thin ansi_bright_black;
@@ -310,17 +310,14 @@ class DecisionApp(App):
                             widget.border_title = "free text"
                         yield widget
                         if dtype in ("single", "multi"):
-                            yield Input(
-                                placeholder="Other — type your own answer",
-                                id=f"other-{i}",
-                                classes="other",
-                                disabled=True,
+                            other_ta = TextArea(
+                                id=f"other-{i}", classes="other", disabled=True
                             )
-                        yield Input(
-                            placeholder="Notes (optional)",
-                            id=f"notes-{i}",
-                            classes="notes",
-                        )
+                            other_ta.border_title = "other — your own answer"
+                            yield other_ta
+                        notes_ta = TextArea(id=f"notes-{i}", classes="notes")
+                        notes_ta.border_title = "notes (optional)"
+                        yield notes_ta
         yield Footer()
 
     def on_mount(self) -> None:
@@ -334,13 +331,13 @@ class DecisionApp(App):
         d = self.decisions[i]
         dtype = d.get("type", "single")
         widget = self.query_one(f"#input-{i}")
-        notes = self.query_one(f"#notes-{i}", Input).value.strip()
+        notes = self.query_one(f"#notes-{i}", TextArea).text.strip()
         other = ""
         if dtype == "single":
             idx = widget.pressed_index
             if idx == len(d["options"]):  # the auto-appended Other… button
                 selected = []
-                other = self.query_one(f"#other-{i}", Input).value.strip()
+                other = self.query_one(f"#other-{i}", TextArea).text.strip()
             elif idx >= 0:
                 selected = [option_id(d["options"][idx])]
             else:
@@ -352,7 +349,7 @@ class DecisionApp(App):
             picked = sorted(v for v in widget.selected if isinstance(v, int))
             selected = [option_id(d["options"][j]) for j in picked]
             if OTHER in widget.selected:
-                other = self.query_one(f"#other-{i}", Input).value.strip()
+                other = self.query_one(f"#other-{i}", TextArea).text.strip()
         else:
             text = widget.text.strip()
             selected = [text] if text else []
@@ -384,7 +381,7 @@ class DecisionApp(App):
         idx = int(event.radio_set.id.removeprefix("input-"))
         d = self.decisions[idx]
         if d.get("type", "single") == "single":  # bool radio sets have no Other…
-            other_input = self.query_one(f"#other-{idx}", Input)
+            other_input = self.query_one(f"#other-{idx}", TextArea)
             if event.radio_set.pressed_index == len(d["options"]):
                 # Other… chosen: open the text field and wait for typing
                 other_input.disabled = False
@@ -404,7 +401,7 @@ class DecisionApp(App):
     ) -> None:
         idx = int(event.selection_list.id.removeprefix("input-"))
         if self.decisions[idx].get("type", "single") == "multi":  # bools have no Other…
-            other_input = self.query_one(f"#other-{idx}", Input)
+            other_input = self.query_one(f"#other-{idx}", TextArea)
             wants_other = OTHER in event.selection_list.selected
             if wants_other and other_input.disabled:
                 other_input.disabled = False
@@ -414,19 +411,8 @@ class DecisionApp(App):
         self._refresh_nav()
 
     def on_text_area_changed(self, _) -> None:
+        # answer textareas and Other…/notes fields all affect answered state
         self._refresh_nav()
-
-    def on_input_changed(self, _) -> None:
-        # typing in an Other… field changes answered state live
-        self._refresh_nav()
-
-    def on_input_submitted(self, event: Input.Submitted) -> None:
-        # enter in a filled Other… field advances like picking an option does
-        if event.input.id and event.input.id.startswith("other-") and event.input.value.strip():
-            idx = int(event.input.id.removeprefix("other-"))
-            nxt = self._next_unanswered(idx)
-            if nxt is not None:
-                self._goto(nxt, focus_input=True)
 
     # --- navigation --------------------------------------------------------
 
