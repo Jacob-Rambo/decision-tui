@@ -1,6 +1,6 @@
 ---
 name: decision-dashboard
-description: Present multiple decisions to Jake as an interactive TUI dashboard (tmux split pane when prose accompanies it, popup overlay only when the dashboard is the entire message) instead of walls of terminal text. Use when a task reaches a point requiring 2+ user decisions, or one decision with dense comparative context (tables, tradeoffs, evidence). Renders a JSON decision spec via decision-tui, collects structured answers. Falls back to AskUserQuestion outside tmux.
+description: Present multiple decisions to Jake as an interactive TUI dashboard (always a tmux popup overlay — the dashboard IS the message, context goes in the spec not in prose; split pane only if Jake explicitly asks) instead of walls of terminal text. Use when a task reaches a point requiring 2+ user decisions, or one decision with dense comparative context (tables, tradeoffs, evidence). Renders a JSON decision spec via decision-tui, collects structured answers. Falls back to AskUserQuestion outside tmux.
 user_invocable: true
 trigger: when a task reaches a multi-decision checkpoint, when Jake asks for a decision dashboard, or when dense comparative context (tickets, tradeoff tables, batch dispositions) needs structured answers
 ---
@@ -23,19 +23,18 @@ When you need Jake to make multiple decisions — or one decision with dense con
    decision-tui --validate /tmp/decisions-X.json
    ```
 
-3. **Present it.** Pick the surface by one rule: **if you are writing substantive prose in the same turn you open the dashboard, use a split pane — the popup hides it.** The popup is a modal overlay that grabs focus and covers the screen; anything you write alongside it is invisible to Jake until he dismisses the dashboard. Popup ONLY when the dashboard is the entire message of the turn (your accompanying text is one short "dashboard is open" line and nothing else).
+3. **Present it.** ALWAYS use the popup. The popup is a modal overlay that grabs focus and covers the screen — so make the dashboard the entire message of the turn: anything Jake must read goes in `context_md`, not in conversation prose alongside (it would be hidden until he dismisses the dashboard). Your accompanying text is one short "dashboard is open" line and nothing else.
 
-   Split pane (the common case — your prose stays visible beside the dashboard):
+   Always launch via `decision-tui-popup` (NEVER raw `tmux display-popup` — tmux silently discards a popup when the client already shows one: exit 0, command never runs, answers file never appears; the launcher serializes popups per client with flock so concurrent dashboards queue). Background the launch (`&`) — it blocks until the popup closes:
    ```bash
    ANSWERS=/tmp/answers-X.json
    rm -f "$ANSWERS"
-   tmux split-window -h -l 55% "decision-tui /tmp/decisions-X.json $ANSWERS"
-   ```
-   Popup (dashboard-as-the-whole-message). Always launch via `decision-tui-popup` (NEVER raw `tmux display-popup` — tmux silently discards a popup when the client already shows one: exit 0, command never runs, answers file never appears; the launcher serializes popups per client with flock so concurrent dashboards queue). Background the launch (`&`) — it blocks until the popup closes:
-   ```bash
    decision-tui-popup /tmp/decisions-X.json "$ANSWERS" >/tmp/popup-launch.log 2>&1 &
    ```
-   For a full-screen takeover that snaps back afterwards, add zoom to the split: `tmux split-window -h "decision-tui spec answers" \; resize-pane -Z`.
+   Use a split pane ONLY when Jake explicitly asks for one:
+   ```bash
+   tmux split-window -h -l 55% "decision-tui /tmp/decisions-X.json $ANSWERS"
+   ```
 
 4. **Tell Jake** in one short line that the dashboard is open (keys: arrows to navigate decisions, `ctrl+s` submit, `esc` cancel).
 
