@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Sync the in-repo skill source to every Claude Code instance's skills dir.
+#
+# Claude Code's startup scan does not follow symlinked skill directories, so
+# the config dirs hold real copies; this script is the one command that
+# refreshes them after editing skills/ in the repo.
+set -u
+SRC="$(cd "$(dirname "$0")/../skills" && pwd)"
+TARGETS=(
+    "$HOME/.claude/skills"
+    "$HOME/.claude-work/skills"
+)
+for target in "${TARGETS[@]}"; do
+    mkdir -p "$target"
+    for skill in "$SRC"/*/; do
+        name=$(basename "$skill")
+        rsync -a --delete "$skill" "$target/$name/"
+        echo "synced $name -> $target/$name"
+    done
+done
