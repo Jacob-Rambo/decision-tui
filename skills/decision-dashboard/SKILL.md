@@ -1,6 +1,6 @@
 ---
 name: decision-dashboard
-description: Present multiple decisions to Jake as an interactive TUI dashboard (tmux popup overlay by default, split pane when the conversation must stay visible) instead of walls of terminal text. Use when a task reaches a point requiring 2+ user decisions, or one decision with dense comparative context (tables, tradeoffs, evidence). Renders a JSON decision spec via decision-tui, collects structured answers. Falls back to AskUserQuestion outside tmux.
+description: Present multiple decisions to Jake as an interactive TUI dashboard (tmux split pane when prose accompanies it, popup overlay only when the dashboard is the entire message) instead of walls of terminal text. Use when a task reaches a point requiring 2+ user decisions, or one decision with dense comparative context (tables, tradeoffs, evidence). Renders a JSON decision spec via decision-tui, collects structured answers. Falls back to AskUserQuestion outside tmux.
 user_invocable: true
 trigger: when a task reaches a multi-decision checkpoint, when Jake asks for a decision dashboard, or when dense comparative context (tickets, tradeoff tables, batch dispositions) needs structured answers
 ---
@@ -16,22 +16,24 @@ When you need Jake to make multiple decisions — or one decision with dense con
 
 ## Flow
 
-1. **Write the spec.** Create a JSON decision spec (schema below) at a unique temp path, e.g. `/tmp/decisions-<topic>-$$.json`. Put real substance in `context_md` — comparison tables, evidence, file references. The markdown is the dashboard's whole value; the option list is just the input control.
+1. **Write the spec.** Create a JSON decision spec (schema below) at a unique temp path, e.g. `/tmp/decisions-<topic>-$$.json`. Put real substance in `context_md` — comparison tables, evidence, file references. The markdown is the dashboard's whole value; the option list is just the input control. When the source records are thin (empty descriptions, no comments, no history), say so explicitly in `context_md` — e.g. "Ticket has no description or comments; only the title is known" — so a sparse panel reads as a fact about the source, not a rendering failure. Never pad thin sources with invented detail.
 
 2. **Validate it** (a malformed spec opens a broken pane in Jake's face):
    ```bash
    decision-tui --validate /tmp/decisions-X.json
    ```
 
-3. **Present it.** Default to a modal popup overlay — it floats over the Claude Code session, grabs focus, and disappears on submit/cancel, returning Jake exactly where he was. Always launch via `decision-tui-popup` (NEVER raw `tmux display-popup` — tmux silently discards a popup when the client already shows one: exit 0, command never runs, answers file never appears; the launcher serializes popups per client with flock so concurrent dashboards queue and appear one after another). Background the launch (`&`) — it blocks until the popup closes:
+3. **Present it.** Pick the surface by one rule: **if you are writing substantive prose in the same turn you open the dashboard, use a split pane — the popup hides it.** The popup is a modal overlay that grabs focus and covers the screen; anything you write alongside it is invisible to Jake until he dismisses the dashboard. Popup ONLY when the dashboard is the entire message of the turn (your accompanying text is one short "dashboard is open" line and nothing else).
+
+   Split pane (the common case — your prose stays visible beside the dashboard):
    ```bash
    ANSWERS=/tmp/answers-X.json
    rm -f "$ANSWERS"
-   decision-tui-popup /tmp/decisions-X.json "$ANSWERS" >/tmp/popup-launch.log 2>&1 &
-   ```
-   Use a **split pane** instead when Jake needs the conversation visible while deciding (e.g. the decisions reference output above):
-   ```bash
    tmux split-window -h -l 55% "decision-tui /tmp/decisions-X.json $ANSWERS"
+   ```
+   Popup (dashboard-as-the-whole-message). Always launch via `decision-tui-popup` (NEVER raw `tmux display-popup` — tmux silently discards a popup when the client already shows one: exit 0, command never runs, answers file never appears; the launcher serializes popups per client with flock so concurrent dashboards queue). Background the launch (`&`) — it blocks until the popup closes:
+   ```bash
+   decision-tui-popup /tmp/decisions-X.json "$ANSWERS" >/tmp/popup-launch.log 2>&1 &
    ```
    For a full-screen takeover that snaps back afterwards, add zoom to the split: `tmux split-window -h "decision-tui spec answers" \; resize-pane -Z`.
 
@@ -42,7 +44,7 @@ When you need Jake to make multiple decisions — or one decision with dense con
    for i in $(seq 1 90); do [ -f "$ANSWERS" ] && break; sleep 5; done; cat "$ANSWERS" 2>/dev/null || echo "NOT_ANSWERED_YET"
    ```
 
-6. **Act on the answers.** `status` is `submitted` or `cancelled`. On `cancelled`, ask Jake how he wants to proceed in plain conversation. Clean up the temp files afterwards.
+6. **Act on the answers.** `status` is `submitted` or `cancelled`. On `cancelled`, read the timing: an **immediate cancel** (seconds after opening) usually means "I just wanted to look" or "not now" — treat it as a dismissal, summarize the pending decisions briefly in conversation, and do NOT re-open the dashboard unasked. A **considered cancel** (after real time in the dashboard) more likely means the options don't fit — ask in plain conversation what's wrong with the framing. Clean up the temp files afterwards.
 
 ## Concurrency
 
