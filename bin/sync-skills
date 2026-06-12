@@ -9,6 +9,7 @@ SRC="$(cd "$(dirname "$0")/../skills" && pwd)"
 TARGETS=(
     "$HOME/.claude/skills"
     "$HOME/.claude-work/skills"
+    "/mnt/general-storage/repos/internal-dev-env/.claude/skills"
 )
 for target in "${TARGETS[@]}"; do
     mkdir -p "$target"
