@@ -11,6 +11,7 @@ from pathlib import Path
 
 from rich.segment import Segment
 from rich.style import Style as RichStyle
+from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, VerticalScroll
@@ -227,6 +228,11 @@ class DecisionApp(App):
     TextArea.other:focus, TextArea.notes:focus {
         border: round ansi_blue;
     }
+    TextArea > .text-area--cursor {
+        color: ansi_default;
+        background: ansi_bright_white;
+        text-style: bold;
+    }
     MarkdownTableContent {
         keyline: thin ansi_bright_black;
     }
@@ -324,6 +330,11 @@ class DecisionApp(App):
         # bools count as answered (false) from the start — sync the sidebar
         # dots and header count with reality before any interaction
         self._refresh_nav()
+
+    def on_descendant_focus(self, event: events.DescendantFocus) -> None:
+        # audible cue when a text field activates, so Jake knows typing is live
+        if isinstance(event.widget, TextArea):
+            self.bell()
 
     # --- answer collection -------------------------------------------------
 
