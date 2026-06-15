@@ -5,7 +5,9 @@ Usage:
     decision-tui --validate <spec.json>
 """
 
+import shutil
 import signal
+import subprocess
 import sys
 from pathlib import Path
 
@@ -39,6 +41,43 @@ from decision_tui.spec import SpecError, load_spec, option_id, write_answers
 
 ANSWERED = "[green]●[/green]"
 UNANSWERED = "[dim]○[/dim]"
+
+# focus cue: a real sound clip beats the terminal bell (which is faint and at
+# the mercy of the terminal's bell config). Played detached so it never blocks.
+NOTIFY_SOUND = Path(__file__).parent / "assets" / "notify.mp3"
+_SOUND_PLAYERS = (
+    ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet"],
+    ["mpv", "--no-video", "--really-quiet"],
+    ["gst-play-1.0", "--quiet"],
+    ["pw-play"],
+)
+
+
+def _sound_command() -> list | None:
+    if not NOTIFY_SOUND.exists():
+        return None
+    for player in _SOUND_PLAYERS:
+        if shutil.which(player[0]):
+            return player + [str(NOTIFY_SOUND)]
+    return None
+
+
+_FOCUS_SOUND_CMD = _sound_command()
+
+
+def _play_focus_sound() -> bool:
+    if not _FOCUS_SOUND_CMD:
+        return False
+    try:
+        subprocess.Popen(
+            _FOCUS_SOUND_CMD,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+        )
+        return True
+    except OSError:
+        return False
 
 # value of the auto-appended free-text option on every single/multi decision
 OTHER = "__other__"
@@ -352,9 +391,11 @@ class DecisionApp(App):
         self._refresh_nav()
 
     def on_descendant_focus(self, event: events.DescendantFocus) -> None:
-        # audible cue when a text field activates, so Jake knows typing is live
+        # audible cue when a text field activates, so Jake knows typing is live;
+        # fall back to the terminal bell only if no audio player is available
         if isinstance(event.widget, TextArea):
-            self.bell()
+            if not _play_focus_sound():
+                self.bell()
 
     # --- answer collection -------------------------------------------------
 
