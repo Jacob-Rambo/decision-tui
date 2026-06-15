@@ -19,6 +19,7 @@ from textual.content import Content
 from textual.strip import Strip
 from textual.widgets import OptionList
 from textual.widgets.option_list import OptionDoesNotExist
+from textual.widgets.text_area import TextAreaTheme
 from textual.widgets import (
     ContentSwitcher,
     Footer,
@@ -45,6 +46,30 @@ OTHER = "__other__"
 
 def _option_label(option: dict) -> str:
     return option["label"] + (" ★" if option.get("recommended") else "")
+
+
+# TextArea paints its own document background from its *theme*, not from the
+# widget's CSS — so a non-transparent base_style or the cursor-line highlight
+# shows as a "black box" the text sits in, regardless of CSS `background`. This
+# theme leaves base/gutter/cursor-line styles empty so the dashboard background
+# shows straight through, and gives the caret a bright reversed block (no
+# foreign-colored box behind it).
+TRANSPARENT_TA = TextAreaTheme(
+    name="dashboard",
+    base_style=RichStyle(),
+    gutter_style=RichStyle(),
+    cursor_line_style=RichStyle(),
+    cursor_line_gutter_style=RichStyle(),
+    cursor_style=RichStyle(reverse=True, bold=True),
+    selection_style=RichStyle(reverse=True),
+)
+
+
+def _make_textarea(widget_id: str, css_class: str, disabled: bool = False) -> TextArea:
+    ta = TextArea(id=widget_id, classes=css_class, disabled=disabled)
+    ta.register_theme(TRANSPARENT_TA)
+    ta.theme = "dashboard"
+    return ta
 
 
 class DecisionRadio(RadioButton):
@@ -228,11 +253,6 @@ class DecisionApp(App):
     TextArea.other:focus, TextArea.notes:focus {
         border: round ansi_blue;
     }
-    TextArea > .text-area--cursor {
-        color: ansi_default;
-        background: ansi_bright_white;
-        text-style: bold;
-    }
     MarkdownTableContent {
         keyline: thin ansi_bright_black;
     }
@@ -312,16 +332,16 @@ class DecisionApp(App):
                             )
                             widget.border_title = "pick any · space toggles"
                         else:
-                            widget = TextArea(id=f"input-{i}", classes="answer")
+                            widget = _make_textarea(f"input-{i}", "answer")
                             widget.border_title = "free text"
                         yield widget
                         if dtype in ("single", "multi"):
-                            other_ta = TextArea(
-                                id=f"other-{i}", classes="other", disabled=True
+                            other_ta = _make_textarea(
+                                f"other-{i}", "other", disabled=True
                             )
                             other_ta.border_title = "other — your own answer"
                             yield other_ta
-                        notes_ta = TextArea(id=f"notes-{i}", classes="notes")
+                        notes_ta = _make_textarea(f"notes-{i}", "notes")
                         notes_ta.border_title = "notes (optional)"
                         yield notes_ta
         yield Footer()
