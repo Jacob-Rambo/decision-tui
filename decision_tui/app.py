@@ -13,7 +13,6 @@ from pathlib import Path
 
 from rich.segment import Segment
 from rich.style import Style as RichStyle
-from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, VerticalScroll
@@ -42,7 +41,7 @@ from decision_tui.spec import SpecError, load_spec, option_id, write_answers
 ANSWERED = "[green]●[/green]"
 UNANSWERED = "[dim]○[/dim]"
 
-# focus cue: a real sound clip beats the terminal bell (which is faint and at
+# open cue: a real sound clip beats the terminal bell (which is faint and at
 # the mercy of the terminal's bell config). Played detached so it never blocks.
 NOTIFY_SOUND = Path(__file__).parent / "assets" / "notify.mp3"
 _SOUND_PLAYERS = (
@@ -62,15 +61,15 @@ def _sound_command() -> list | None:
     return None
 
 
-_FOCUS_SOUND_CMD = _sound_command()
+_NOTIFY_SOUND_CMD = _sound_command()
 
 
-def _play_focus_sound() -> bool:
-    if not _FOCUS_SOUND_CMD:
+def _play_notify_sound() -> bool:
+    if not _NOTIFY_SOUND_CMD:
         return False
     try:
         subprocess.Popen(
-            _FOCUS_SOUND_CMD,
+            _NOTIFY_SOUND_CMD,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             stdin=subprocess.DEVNULL,
@@ -78,6 +77,7 @@ def _play_focus_sound() -> bool:
         return True
     except OSError:
         return False
+
 
 # value of the auto-appended free-text option on every single/multi decision
 OTHER = "__other__"
@@ -389,13 +389,10 @@ class DecisionApp(App):
         # bools count as answered (false) from the start — sync the sidebar
         # dots and header count with reality before any interaction
         self._refresh_nav()
-
-    def on_descendant_focus(self, event: events.DescendantFocus) -> None:
-        # audible cue when a text field activates, so Jake knows typing is live;
-        # fall back to the terminal bell only if no audio player is available
-        if isinstance(event.widget, TextArea):
-            if not _play_focus_sound():
-                self.bell()
+        # announce that a dashboard has opened and needs attention; fall back to
+        # the terminal bell only if no audio player is available
+        if not _play_notify_sound():
+            self.bell()
 
     # --- answer collection -------------------------------------------------
 
