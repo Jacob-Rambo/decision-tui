@@ -21,12 +21,30 @@ example is in `examples/sample-spec.json`.
 
 ## How Claude uses it
 
-The `decision-dashboard` skill (`~/.claude/skills/decision-dashboard/SKILL.md`):
-write spec → `--validate` → present (default `decision-tui-popup spec answers &`
-for a modal overlay; `tmux split-window -h -l 55%` to keep the conversation visible)
-→ poll for the answers file → act on it. Works because tmux is socket-based, so
-Claude's TTY-less Bash subprocesses can spawn panes; falls back to AskUserQuestion
-outside tmux.
+The primary path is the **MCP server** (`decision_tui/mcp_server.py`, entry point
+`decision-tui-mcp`): one tool, `present_decisions(title, decisions)`, which runs
+the popup and returns the answers as a real MCP tool result. The model receives
+structured answers as data — no native question UI, no deny-reason
+reinterpretation, no polling. A `PreToolUse` hook
+(`bin/askuserquestion-dashboard-hook`) redirects dense native AskUserQuestion
+calls to this tool (instant deny — never blocks).
+
+The `decision-dashboard` skill documents the spec/answers schema and a manual
+fallback (`decision-tui-popup spec answers &` → poll the answers file) for when
+the MCP tool is unavailable.
+
+### Registering the MCP server (both Claude instances)
+
+The registration lives in each instance's `.claude.json` (a large state file we
+don't version) — reproduce it with:
+
+```bash
+claude mcp add decision-dashboard --scope user -- decision-tui-mcp
+CLAUDE_CONFIG_DIR="$HOME/.claude-work" claude mcp add decision-dashboard --scope user -- decision-tui-mcp
+```
+
+Verify with `claude mcp list` (expect `decision-dashboard: … ✔ Connected`). The
+PreToolUse hook is wired in `settings.json` (tracked in personal-configs).
 
 ## Concurrency
 

@@ -1,20 +1,27 @@
 ---
 name: decision-dashboard
-description: Present multiple decisions to Jake as an interactive TUI dashboard (always a tmux popup overlay — the dashboard IS the message, context goes in the spec not in prose; split pane only if Jake explicitly asks) instead of walls of terminal text. Use when a task reaches a point requiring 2+ user decisions, or one decision with dense comparative context (tables, tradeoffs, evidence). Renders a JSON decision spec via decision-tui, collects structured answers. Falls back to AskUserQuestion outside tmux.
+description: Present multiple decisions to Jake as an interactive TUI dashboard instead of walls of terminal text or the native question picker. Use when a task reaches a point requiring 2+ user decisions, or one decision with dense comparative context (tables, tradeoffs, evidence, tickets). The primary path is the MCP tool mcp__decision-dashboard__present_decisions, which shows a tmux popup and returns structured answers as a real tool result.
 user_invocable: true
 trigger: when a task reaches a multi-decision checkpoint, when Jake asks for a decision dashboard, or when dense comparative context (tickets, tradeoff tables, batch dispositions) needs structured answers
 ---
 
 # Decision Dashboard
 
-When you need Jake to make multiple decisions — or one decision with dense context — do not dump them as prose in the conversation. Render them as an interactive dashboard in a tmux split pane using `decision-tui`, and read his answers back as JSON.
+When you need Jake to make multiple decisions — or one decision with dense context — do not dump them as prose in the conversation, and do not use the native AskUserQuestion picker. Present them as an interactive dashboard and consume his structured answers.
 
-## Preconditions
+## Primary path: the `present_decisions` MCP tool
 
-- `$TMUX` must be set (it is inherited by your Bash subprocesses when Claude Code runs inside tmux). If `$TMUX` is empty, **fall back to the AskUserQuestion tool** — do not attempt the pane.
-- `decision-tui` is on PATH at `~/.local/bin/decision-tui` (source: `/mnt/general-storage/repos/decision-tui`).
+Call **`mcp__decision-dashboard__present_decisions(title, decisions)`**. It renders the dashboard as a tmux popup over Jake's session, blocks while he answers, and **returns the answers as a real tool result** — you receive structured data directly, then write your response after seeing it. This is the whole mechanism: no manual launching, no polling, no native picker.
 
-## Flow
+- `decisions` is a list of decision objects using the spec schema below (each needs at least `id`, `question`, and — for single/multi — `options`). Put the real substance in each decision's `context_md`.
+- The tool returns `{"status": "submitted"|"cancelled"|"unavailable", "answers": {...}}` (answers format below). On `"unavailable"` (no tmux) fall back to AskUserQuestion; on `"cancelled"` apply the cancel guidance below.
+- A `PreToolUse` hook auto-redirects any native AskUserQuestion call here, so even if you reach for AskUserQuestion out of habit, dense question sets land in the dashboard. Sparse single questions stay native — that's intended; don't force the dashboard for a trivial one-question ask.
+
+The rest of this skill is the spec/answers schema (which the tool uses) plus a manual fallback for when the MCP tool is unavailable.
+
+## Manual fallback (MCP tool unavailable)
+
+Only when `mcp__decision-dashboard__present_decisions` is not registered. `decision-tui` is on PATH at `~/.local/bin/decision-tui` (source `/mnt/general-storage/repos/decision-tui`); `$TMUX` must be set or fall back to AskUserQuestion.
 
 1. **Write the spec.** Create a JSON decision spec (schema below) at a unique temp path, e.g. `/tmp/decisions-<topic>-$$.json`. Put real substance in `context_md` — comparison tables, evidence, file references. The markdown is the dashboard's whole value; the option list is just the input control. When the source records are thin (empty descriptions, no comments, no history), say so explicitly in `context_md` — e.g. "Ticket has no description or comments; only the title is known" — so a sparse panel reads as a fact about the source, not a rendering failure. Never pad thin sources with invented detail.
 

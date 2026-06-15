@@ -1,37 +1,27 @@
 #!/usr/bin/env python3
-"""PreToolUse hook: route dense AskUserQuestion calls to the decision dashboard.
+"""PreToolUse hook: redirect dense AskUserQuestion calls to the dashboard tool.
 
-Receives the PreToolUse payload on stdin. For dense question sets (2+ questions,
-any question with 4+ options, or any option carrying a preview) it renders the
-questions in decision-tui as a tmux popup, blocks while Jake answers, and
-returns a deny whose reason carries the answers — the model treats them as the
-user's reply and proceeds. Sparse questions, cancels, missing tmux, or any
-failure fall through to the native AskUserQuestion UI via allow.
+This hook does NOT show the dashboard itself. For a dense question set (2+
+questions, any question with 4+ options, or any option carrying a preview) it
+denies AskUserQuestion *instantly* with a reason telling the model to call the
+`mcp__decision-dashboard__present_decisions` MCP tool instead. That tool shows
+the popup and returns the answers as a real tool result.
+
+Doing it this way means the hook never blocks: the native UI is cancelled in
+milliseconds (no concurrent-render race, no lingering UI), and the dashboard's
+answers come back to the model as structured data rather than as deny-reason
+text it must reinterpret. Sparse questions and missing tmux fall through to the
+native UI via allow.
 
 Every run appends a line to /tmp/auq-hook.log for diagnosis.
 """
 
 import json
 import os
-import signal
-import subprocess
 import sys
-import tempfile
 import time
 
 LOG = "/tmp/auq-hook.log"
-# set once the popup is launched, so a timeout/termination handler can close it
-_POPUP_ANSWERS_PATH = None
-HERE = os.path.dirname(os.path.abspath(__file__))
-LAUNCHER = os.path.join(HERE, "decision-tui-popup")
-RECOMMENDED_SUFFIX = " (Recommended)"
-# Must stay just under the hook timeout in settings.json (1800s) so we exit
-# gracefully and clean up the popup, rather than being SIGKILLed mid-wait.
-# A big triage batch can take many minutes to read and decide — too short a
-# budget times the hook out while Jake is still deciding, which both shows the
-# native UI AND leaves the popup orphaned (the popup is owned by the tmux
-# server, not this process, so killing the launcher does not close it).
-POPUP_BUDGET_SECONDS = 1790
 
 
 def log(msg: str) -> None:
@@ -42,27 +32,8 @@ def log(msg: str) -> None:
         pass
 
 
-def _close_popup() -> None:
-    # the popup is owned by the tmux server, not a child of this process, so it
-    # must be killed explicitly by its unique answers path
-    if _POPUP_ANSWERS_PATH:
-        subprocess.run(["pkill", "-f", _POPUP_ANSWERS_PATH], capture_output=True)
-
-
-def _on_terminate(signum, _frame):
-    # if the harness clamps the hook timeout below our budget and SIGTERMs us,
-    # still close the orphaned popup and fall through to the native UI
-    _close_popup()
-    allow(f"terminated by signal {signum}")
-
-
 def respond(decision: str, reason: str = "") -> None:
-    out = {
-        "hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "permissionDecision": decision,
-        }
-    }
+    out = {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": decision}}
     if reason:
         out["hookSpecificOutput"]["permissionDecisionReason"] = reason
     print(json.dumps(out))
@@ -86,48 +57,20 @@ def is_dense(questions: list) -> bool:
     return False
 
 
-def build_spec(questions: list) -> dict:
-    decisions = []
-    for i, q in enumerate(questions):
-        options = []
-        previews = []
-        for o in q.get("options") or []:
-            label = o.get("label", "")
-            recommended = label.endswith(RECOMMENDED_SUFFIX)
-            clean = label[: -len(RECOMMENDED_SUFFIX)] if recommended else label
-            opt = {"label": clean}
-            if o.get("description"):
-                opt["description"] = o["description"]
-            if recommended:
-                opt["recommended"] = True
-            options.append(opt)
-            if o.get("preview"):
-                previews.append(f"### {clean}\n\n{o['preview']}")
-        decision = {
-            "id": f"q{i + 1}",
-            "question": q.get("question", f"Question {i + 1}"),
-            "type": "multi" if q.get("multiSelect") else "single",
-            "options": options,
-        }
-        if previews:
-            decision["context_md"] = "\n\n".join(previews)
-        decisions.append(decision)
-    return {"title": "Questions from Claude", "decisions": decisions}
-
-
-def format_answers(questions: list, answers: dict) -> str:
-    lines = []
-    for i, q in enumerate(questions):
-        a = answers.get(f"q{i + 1}") or {}
-        chosen = ", ".join(a.get("selected") or [])
-        parts = [chosen] if chosen else []
-        if a.get("other"):
-            parts.append(f'their own answer: "{a["other"]}"')
-        answer = "; ".join(parts) if parts else "(no selection)"
-        lines.append(f'{i + 1}. "{q.get("question", "")}" -> {answer}')
-        if a.get("notes"):
-            lines.append(f'   notes: {a["notes"]}')
-    return "\n".join(lines)
+REDIRECT = (
+    "Do NOT use AskUserQuestion here. Instead call the MCP tool "
+    "mcp__decision-dashboard__present_decisions to show Jake an interactive "
+    "dashboard, which is far easier for him to digest than the native picker.\n\n"
+    "Convert the questions you were about to ask into the tool's `decisions` "
+    "argument: one object per question with a unique `id`, the `question` text, "
+    "`type` ('single', or 'multi' if multiple answers are allowed), and "
+    "`options` (list of {label, description}). Put any supporting detail "
+    "(tables, evidence, the items being decided on) in each decision's "
+    "`context_md` as markdown — the richer the better; this is the whole point "
+    "of the dashboard. Give the call a short `title`.\n\n"
+    "Use the tool's returned answers as Jake's response and proceed. Only if it "
+    "returns status 'unavailable' should you fall back to AskUserQuestion."
+)
 
 
 def main() -> None:
@@ -141,52 +84,10 @@ def main() -> None:
     if not is_dense(questions):
         allow(f"below density threshold ({len(questions)} question(s))")
     if not os.environ.get("TMUX"):
-        allow("TMUX not set in hook environment")
+        allow("TMUX not set — dashboard cannot show")
 
-    global _POPUP_ANSWERS_PATH
-    fd, spec_path = tempfile.mkstemp(prefix="auq-spec-", suffix=".json")
-    with os.fdopen(fd, "w") as f:
-        json.dump(build_spec(questions), f)
-    answers_path = spec_path.replace("auq-spec-", "auq-answers-")
-    _POPUP_ANSWERS_PATH = answers_path
-    signal.signal(signal.SIGTERM, _on_terminate)
-
-    try:
-        proc = subprocess.run(
-            [LAUNCHER, spec_path, answers_path],
-            capture_output=True,
-            text=True,
-            timeout=POPUP_BUDGET_SECONDS,
-        )
-    except subprocess.TimeoutExpired:
-        _close_popup()
-        allow("dashboard not answered within hook budget")
-    if proc.returncode != 0:
-        allow(f"launcher failed rc={proc.returncode}: {proc.stderr.strip()[:200]}")
-
-    try:
-        result = json.load(open(answers_path))
-    except Exception as e:
-        allow(f"unreadable answers file: {e}")
-    finally:
-        for p in (spec_path, answers_path):
-            try:
-                os.unlink(p)
-            except OSError:
-                pass
-
-    if result.get("status") != "submitted":
-        allow("user cancelled the dashboard")
-
-    log(f"deny with {len(questions)} answered question(s)")
-    respond(
-        "deny",
-        "The user already answered these questions in the decision dashboard "
-        "(do not show them again). Their answers:\n\n"
-        + format_answers(questions, result.get("answers") or {})
-        + "\n\nTreat these as the user's final, authoritative answers. "
-        "Do NOT call AskUserQuestion again for these questions — proceed with the work.",
-    )
+    log(f"redirect {len(questions)} question(s) to present_decisions")
+    respond("deny", REDIRECT)
 
 
 if __name__ == "__main__":
