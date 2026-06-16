@@ -59,6 +59,14 @@ Only when `mcp__decision-dashboard__present_decisions` is not registered. `decis
 - Every termination path writes an answers file (`submitted`, or `cancelled` on esc/kill/popup teardown — the app traps SIGTERM/SIGHUP), so polling always terminates. Still keep the per-call poll under ~8 minutes and re-poll in a fresh Bash call.
 - Answers paths must be unique per dashboard (the `$$`/topic naming above guarantees this); two dashboards sharing one answers file would corrupt the handshake.
 
+## Voice input (text fields)
+
+Any text field — a `text` decision's answer box, the auto-appended "Other…" box, and every "notes" box — accepts **local voice dictation**. Jake focuses the field and presses **`ctrl+r`** to start recording (the border shows `● REC`), presses `ctrl+r` again to stop; the clip is transcribed on-box (faster-whisper `small.en`, CPU, no audio leaves the machine) and inserted at the cursor. The model is pre-warmed when the dashboard opens, so the first dictation has no cold-start stall.
+
+This is automatic — nothing to configure in a spec. It just means `text` decisions and `notes` are cheap for Jake to answer at length, so prefer a `text` decision (or lean on `notes`) when you genuinely want prose, rather than forcing everything into rigid options. Voice degrades gracefully: if `faster-whisper` or a recorder (`pw-record`/`arecord`) is missing, `ctrl+r` just reports voice is unavailable and typing is unaffected.
+
+(Implementation note: true hold-to-talk was investigated and is impossible in the tmux popup — tmux strips the kitty keyboard protocol and emits no key-release events — so the interaction is a press/press toggle, not hold-to-talk. Don't re-attempt kitty release events here.)
+
 ## Spec schema
 
 ```json

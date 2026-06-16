@@ -3,7 +3,7 @@ name = "decision-tui"
 version = "0.1.0"
 description = "Generic terminal decision dashboard: renders a JSON decision spec as a Textual TUI, writes answers as JSON"
 requires-python = ">=3.12"
-dependencies = ["textual>=1.0", "mcp>=1.2"]
+dependencies = ["textual>=1.0", "mcp>=1.2", "faster-whisper>=1.0"]
 
 [project.scripts]
 decision-tui = "decision_tui.app:main"

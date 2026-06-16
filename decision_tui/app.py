@@ -13,6 +13,7 @@ from pathlib import Path
 
 from rich.segment import Segment
 from rich.style import Style as RichStyle
+from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, VerticalScroll
@@ -36,6 +37,7 @@ from textual.widgets import (
 )
 from textual.widgets.selection_list import Selection
 
+from decision_tui import voice
 from decision_tui.spec import SpecError, load_spec, option_id, write_answers
 
 ANSWERED = "[green]●[/green]"
@@ -305,6 +307,7 @@ class DecisionApp(App):
         Binding("escape", "cancel", "Back / Cancel"),
         Binding("ctrl+down", "next_decision", "Next"),
         Binding("ctrl+up", "prev_decision", "Prev"),
+        Binding("ctrl+r", "voice", "Voice"),
     ]
 
     def __init__(self, spec: dict, answers_path: Path) -> None:
@@ -313,6 +316,11 @@ class DecisionApp(App):
         self.answers_path = answers_path
         self.decisions = spec["decisions"]
         self._all_answered_notified = False
+        # voice dictation state
+        self._recording: voice.Recording | None = None
+        self._voice_target: TextArea | None = None
+        self._voice_orig_title = ""
+        self._transcribing = False
         self.sub_title = f"{spec['title']} · 0/{len(self.decisions)} answered"
 
     def compose(self) -> ComposeResult:
@@ -393,6 +401,88 @@ class DecisionApp(App):
         # the terminal bell only if no audio player is available
         if not _play_notify_sound():
             self.bell()
+        # warm the speech model in the background so the first ctrl+r doesn't
+        # pay the cold-start load; harmless no-op if voice isn't available
+        if voice.voice_available()[0]:
+            self._prewarm_voice()
+
+    # --- voice dictation ---------------------------------------------------
+
+    @work(thread=True, group="voice-prewarm", exit_on_error=False)
+    def _prewarm_voice(self) -> None:
+        try:
+            voice.preload()
+        except Exception:
+            pass  # voice stays optional; failures surface on actual use
+
+    def action_voice(self) -> None:
+        target = self.focused
+        if self._transcribing:
+            return  # a transcription is already in flight
+        if self._recording is not None:
+            self._stop_and_transcribe()
+            return
+        if not isinstance(target, TextArea):
+            self.notify(
+                "Focus a text field, then press ctrl+r to dictate into it",
+                severity="warning",
+            )
+            return
+        usable, reason = voice.voice_available()
+        if not usable:
+            self.notify(f"Voice unavailable: {reason}", severity="error")
+            return
+        try:
+            self._recording = voice.Recording()
+        except Exception as e:  # noqa: BLE001 — surface any capture failure
+            self.notify(f"Could not start recording: {e}", severity="error")
+            return
+        self._voice_target = target
+        self._voice_orig_title = target.border_title or ""
+        target.border_title = "● REC — ctrl+r to stop"
+        self.notify("Recording… press ctrl+r to stop and transcribe")
+
+    def _stop_and_transcribe(self) -> None:
+        rec, target = self._recording, self._voice_target
+        self._recording = None
+        wav = rec.stop() if rec else None
+        if target is None:
+            return
+        if not wav:
+            target.border_title = self._voice_orig_title
+            self.notify("No audio captured", severity="warning")
+            return
+        self._transcribing = True
+        target.border_title = "transcribing…"
+        self._transcribe_worker(wav, target)
+
+    @work(thread=True, exclusive=True, exit_on_error=False)
+    def _transcribe_worker(self, wav: str, target: TextArea) -> None:
+        try:
+            text = voice.transcribe(wav)
+            self.call_from_thread(self._insert_transcript, target, text)
+        except Exception as e:  # noqa: BLE001
+            self.call_from_thread(self._voice_failed, target, str(e))
+
+    def _insert_transcript(self, target: TextArea, text: str) -> None:
+        self._transcribing = False
+        target.border_title = self._voice_orig_title
+        if not text:
+            self.notify("Heard nothing — try again", severity="warning")
+            return
+        # space the dictation off from any existing text unless we're at a clean
+        # boundary, so back-to-back dictations don't run words together
+        existing = target.text
+        if existing and not existing[-1:].isspace():
+            text = " " + text
+        target.focus()
+        target.insert(text)
+        self._refresh_nav()
+
+    def _voice_failed(self, target: TextArea, msg: str) -> None:
+        self._transcribing = False
+        target.border_title = self._voice_orig_title
+        self.notify(f"Transcription failed: {msg}", severity="error")
 
     # --- answer collection -------------------------------------------------
 
