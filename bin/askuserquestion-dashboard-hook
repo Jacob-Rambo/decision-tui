@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
-"""PreToolUse hook: redirect dense AskUserQuestion calls to the dashboard tool.
+"""PreToolUse hook: redirect every AskUserQuestion call to the dashboard tool.
 
-This hook does NOT show the dashboard itself. For a dense question set (2+
-questions, any question with 4+ options, or any option carrying a preview) it
-denies AskUserQuestion *instantly* with a reason telling the model to call the
+This hook does NOT show the dashboard itself. For any AskUserQuestion it denies
+the call *instantly* with a reason telling the model to call the
 `mcp__decision-dashboard__present_decisions` MCP tool instead. That tool shows
 the popup and returns the answers as a real tool result.
 
 Doing it this way means the hook never blocks: the native UI is cancelled in
 milliseconds (no concurrent-render race, no lingering UI), and the dashboard's
 answers come back to the model as structured data rather than as deny-reason
-text it must reinterpret. Sparse questions and missing tmux fall through to the
-native UI via allow.
+text it must reinterpret.
+
+The native picker is never used by choice. The only fall-throughs to native are
+hard fallbacks where the dashboard *cannot* run: no tmux (the popup has nowhere
+to render), no questions, or unparseable hook input.
 
 Every run appends a line to /tmp/auq-hook.log for diagnosis.
 """
@@ -45,18 +47,6 @@ def allow(why: str) -> None:
     respond("allow")
 
 
-def is_dense(questions: list) -> bool:
-    if len(questions) >= 2:
-        return True
-    for q in questions:
-        options = q.get("options") or []
-        if len(options) >= 4:
-            return True
-        if any(o.get("preview") for o in options):
-            return True
-    return False
-
-
 REDIRECT = (
     "Do NOT use AskUserQuestion here. Instead call the MCP tool "
     "mcp__decision-dashboard__present_decisions to show Jake an interactive "
@@ -81,8 +71,6 @@ def main() -> None:
     questions = (payload.get("tool_input") or {}).get("questions") or []
     if not questions:
         allow("no questions in tool_input")
-    if not is_dense(questions):
-        allow(f"below density threshold ({len(questions)} question(s))")
     if not os.environ.get("TMUX"):
         allow("TMUX not set — dashboard cannot show")
 

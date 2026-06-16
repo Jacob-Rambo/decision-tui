@@ -15,7 +15,7 @@ Call **`mcp__decision-dashboard__present_decisions(title, decisions)`**. It rend
 
 - `decisions` is a list of decision objects using the spec schema below (each needs at least `id`, `question`, and — for single/multi — `options`). Put the real substance in each decision's `context_md`.
 - The tool returns `{"status": "submitted"|"cancelled"|"unavailable", "answers": {...}}` (answers format below). On `"unavailable"` (no tmux) fall back to AskUserQuestion; on `"cancelled"` apply the cancel guidance below.
-- A `PreToolUse` hook auto-redirects any native AskUserQuestion call here, so even if you reach for AskUserQuestion out of habit, dense question sets land in the dashboard. Sparse single questions stay native — that's intended; don't force the dashboard for a trivial one-question ask.
+- A `PreToolUse` hook auto-redirects **every** AskUserQuestion call here — Jake never wants the native picker. Even a single yes/no goes to the dashboard. The only fall-throughs to native are hard fallbacks where the dashboard cannot run: no tmux, no questions, or unparseable hook input. So just author the `decisions` directly; if you reach for AskUserQuestion out of habit, the hook converts it.
 
 The rest of this skill is the spec/answers schema (which the tool uses) plus a manual fallback for when the MCP tool is unavailable.
 
