@@ -52,8 +52,9 @@ Only when `mcp__decision-dashboard__present_decisions` is not registered. `decis
 
 6. **Act on the answers.** `status` is `submitted` or `cancelled`. On `cancelled`, read the timing: an **immediate cancel** (seconds after opening) usually means "I just wanted to look" or "not now" — treat it as a dismissal, summarize the pending decisions briefly in conversation, and do NOT re-open the dashboard unasked. A **considered cancel** (after real time in the dashboard) more likely means the options don't fit — ask in plain conversation what's wrong with the framing. Clean up the temp files afterwards.
 
-## Concurrency
+## Concurrency & routing
 
+- **Right tab + notification.** With several Ghostty tabs (each a tmux client on one server), the launcher targets the client attached to the launching session (resolved from `$TMUX_PANE`) with `display-popup -c`, so the dashboard appears on the tab running Claude — not whatever tab was last active. This holds for sub-agent calls too (they share the MCP server's pane). On open it fires a `notify-send` desktop notification naming the session + project so a dashboard opening in a background tab isn't missed. Sub-agents can call `present_decisions` (the MCP tool is available to them) and answers round-trip back to them.
 - **Popups queue.** Multiple dashboards triggered at once (parallel subagents, overlapping skills) appear one at a time per tmux client — `decision-tui-popup`'s flock guarantees it. Each caller polls its own answers file, so order doesn't matter.
 - **Split panes coexist** — multiple `split-window` dashboards open side by side; fine for 2, cramped beyond that.
 - Every termination path writes an answers file (`submitted`, or `cancelled` on esc/kill/popup teardown — the app traps SIGTERM/SIGHUP), so polling always terminates. Still keep the per-call poll under ~8 minutes and re-poll in a fresh Bash call.
