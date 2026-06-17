@@ -13,8 +13,8 @@
 # client so concurrent dashboards wait their turn; callers poll their own
 # answers file, so order is irrelevant.
 #
-# Notify: on open we fire a desktop notification (title + session + project) so
-# a dashboard opening in a background tab doesn't go unnoticed.
+# Notify: on open we ring the target tab's bell (BEL to its tty) so Ghostty
+# flags THAT tab with its attention indicator — easy to spot among several tabs.
 #
 # Usage: decision-tui-popup <spec.json> <answers.json>
 set -u
@@ -31,16 +31,18 @@ if [ -z "${TMUX:-}" ]; then
     exit 3
 fi
 
-# Resolve the target client (tab) from the launching pane's session.
+# Resolve the target client (tab) from the launching pane's session — both its
+# name (for display-popup -c) and its tty (for the bell).
 target_client=""
+target_tty=""
 target_session=""
-pane_cwd=""
 if [ -n "${TMUX_PANE:-}" ]; then
     target_session=$(tmux display-message -p -t "$TMUX_PANE" '#{session_name}' 2>/dev/null || true)
-    pane_cwd=$(tmux display-message -p -t "$TMUX_PANE" '#{pane_current_path}' 2>/dev/null || true)
 fi
 if [ -n "$target_session" ]; then
-    target_client=$(tmux list-clients -t "$target_session" -F '#{client_name}' 2>/dev/null | head -n1)
+    read -r target_client target_tty < <(
+        tmux list-clients -t "$target_session" -F '#{client_name} #{client_tty}' 2>/dev/null | head -n1
+    )
 fi
 
 # lock per target client so concurrent popups on the same tab queue
@@ -51,13 +53,14 @@ title=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("tit
 exec 9>"$lock"
 flock 9
 
-# Let Jake know which tab the dashboard is opening in (he runs several). Fired
-# after flock so it coincides with the popup actually showing, not queueing.
-if command -v notify-send >/dev/null 2>&1; then
-    loc="tmux session: ${target_session:-?}"
-    [ -n "$pane_cwd" ] && loc="$loc · ${pane_cwd/#$HOME/\~}"
-    notify-send -a "Decision Dashboard" -u normal \
-        "🗳  Decision dashboard ready" "$title"$'\n'"$loc" >/dev/null 2>&1 &
+# Flag the target tab with Ghostty's bell/attention indicator so Jake sees which
+# tab the dashboard opened in (Ghostty's default bell-features includes
+# attention,title). A BEL written straight to the client tty reaches Ghostty
+# directly — independent of tmux's bell-action — and shows on the tab while it's
+# unfocused, clearing when he switches to it. Fired after flock so it coincides
+# with the popup actually showing, not while it queues.
+if [ -n "$target_tty" ] && [ -w "$target_tty" ]; then
+    printf '\a' > "$target_tty" 2>/dev/null || true
 fi
 
 popup_args=(-E -b rounded -T " $title " -w 92% -h 90%)
