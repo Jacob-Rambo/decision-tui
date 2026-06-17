@@ -5,6 +5,7 @@ Usage:
     decision-tui --validate <spec.json>
 """
 
+import re
 import shutil
 import signal
 import subprocess
@@ -85,16 +86,34 @@ def _play_notify_sound() -> bool:
 # value of the auto-appended free-text option on every single/multi decision
 OTHER = "__other__"
 
-# only these schemes are handed to the browser on a link click — never blindly
-# hand an arbitrary URI (file://, javascript:, custom app handlers) to xdg-open
-_OPENABLE_SCHEMES = ("http://", "https://", "mailto:")
+# schemes we'll hand to xdg-open on a link click. file: is included so links to
+# LOCAL evidence (screenshots, recordings saved on disk) open in the default
+# viewer. Script-execution / data schemes (javascript:, data:, vbscript:) are
+# deliberately excluded — they're XSS vectors, not navigation.
+_OPENABLE_SCHEMES = ("http://", "https://", "mailto:", "file:")
+
+_LINK_SCHEME_RE = re.compile(r"^\s*([a-z][a-z0-9+.\-]*):", re.IGNORECASE)
+_ALLOWED_LINK_SCHEMES = {"http", "https", "mailto", "file"}
+
+
+def _validate_link(url: str) -> bool:
+    """Link validator for markdown rendering: allow our safe schemes (and bare /
+    relative / anchor links) to render clickable; reject everything else so it
+    stays plain text. markdown-it's default rejects file: — we add it back."""
+    match = _LINK_SCHEME_RE.match(url)
+    if not match:
+        return True  # relative, anchor, or scheme-less
+    return match.group(1).lower() in _ALLOWED_LINK_SCHEMES
 
 
 def _md_parser() -> MarkdownIt:
     """gfm-like parser with linkify ON, so BARE urls in ticket context (Loom,
     page links, screenshot/video urls pasted raw) render as clickable links —
-    not just explicit [text](url) markdown. Requires linkify-it-py (a dep)."""
-    return MarkdownIt("gfm-like", {"linkify": True}).enable("linkify")
+    not just explicit [text](url) markdown. Requires linkify-it-py (a dep). A
+    custom validateLink also permits file: links to local evidence."""
+    md = MarkdownIt("gfm-like", {"linkify": True}).enable("linkify")
+    md.validateLink = _validate_link
+    return md
 
 
 def _open_url(url: str) -> bool:
@@ -143,10 +162,38 @@ TRANSPARENT_TA = TextAreaTheme(
 )
 
 
+class GrowingTextArea(TextArea):
+    """A TextArea that grows to fit its content instead of scrolling internally.
+
+    Its content height is the soft-wrapped visual line count, so the box's CSS
+    `height: auto` sizes it to exactly what's typed/dictated; `min-height` and
+    `max-height` clamp it (past max it scrolls again, a safety valve for a giant
+    paste). Overriding `_refresh_size` re-runs layout on each edit so the box
+    resizes live as text is added or removed.
+
+    ctrl+c clears the field (overriding TextArea's copy binding, and stopping it
+    from bubbling to the app's quit handler) — a fast "start over" on one box.
+    """
+
+    BINDINGS = [Binding("ctrl+c", "clear_text", "Clear field", show=False)]
+
+    def get_content_height(self, container, viewport, width: int) -> int:
+        return max(1, self.wrapped_document.height)
+
+    def _refresh_size(self) -> None:
+        super()._refresh_size()
+        self.refresh(layout=True)
+
+    def action_clear_text(self) -> None:
+        self.text = ""
+
+
 def _make_textarea(widget_id: str, css_class: str, disabled: bool = False) -> TextArea:
-    ta = TextArea(id=widget_id, classes=css_class, disabled=disabled)
+    ta = GrowingTextArea(id=widget_id, classes=css_class, disabled=disabled)
     ta.register_theme(TRANSPARENT_TA)
     ta.theme = "dashboard"
+    # key hints on the bottom border, right where the field is
+    ta.border_subtitle = "ctrl+r voice · ctrl+c clear"
     return ta
 
 
@@ -309,7 +356,9 @@ class DecisionApp(App):
         }
     }
     TextArea.answer {
-        height: 8;
+        height: auto;
+        min-height: 4;
+        max-height: 30;
         margin: 1 0;
         border: round ansi_bright_black;
         background: ansi_default;
@@ -318,7 +367,9 @@ class DecisionApp(App):
         border: round ansi_blue;
     }
     TextArea.other, TextArea.notes {
-        height: 4;
+        height: auto;
+        min-height: 4;
+        max-height: 20;
         background: ansi_default;
         border: round ansi_bright_black;
     }
@@ -330,6 +381,11 @@ class DecisionApp(App):
     }
     TextArea.other:focus, TextArea.notes:focus {
         border: round ansi_blue;
+    }
+    /* the Other box is inert until its option is picked — fade it right back
+       so it reads as inactive, then snaps to full strength when enabled */
+    TextArea.other:disabled {
+        opacity: 45%;
     }
     MarkdownTableContent {
         keyline: thin ansi_bright_black;

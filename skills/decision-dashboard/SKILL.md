@@ -74,7 +74,7 @@ This is automatic — nothing to configure in a spec. It just means `text` decis
 - explicit markdown: `[watch the Loom](https://www.loom.com/share/…)`
 - **bare URLs** pasted raw: `https://example.com/screenshot.png` (linkify autolinks them)
 
-So when a ticket carries links, **put them in `context_md`** — don't strip or summarize them away; they're decision evidence. Prefer explicit `[label](url)` with a meaningful label when you know what the link is, but bare URLs from raw ticket text work too. Clicking opens the user's default browser (detached). Only `http`/`https`/`mailto` open; other schemes (`file:`, `javascript:`) render as plain text and won't open, by design. Links need the popup (mouse) — over a split pane or SSH without mouse forwarding, clicks may not register.
+So when a ticket carries links, **put them in `context_md`** — don't strip or summarize them away; they're decision evidence. Prefer explicit `[label](url)` with a meaningful label when you know what the link is, but bare URLs from raw ticket text work too. Clicking opens it detached: `http`/`https`/`mailto` in the default browser, and `file:` links (local screenshots/recordings on disk, e.g. `file:///home/jake/shot.png`) in the default viewer. Script/data schemes (`javascript:`, `data:`, `vbscript:`) are blocked — they render as plain text and never open. Links need the popup (mouse) — over a split pane or SSH without mouse forwarding, clicks may not register.
 
 ## Spec schema
 
