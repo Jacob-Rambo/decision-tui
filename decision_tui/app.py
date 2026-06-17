@@ -11,6 +11,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from markdown_it import MarkdownIt
 from rich.segment import Segment
 from rich.style import Style as RichStyle
 from textual import work
@@ -83,6 +84,42 @@ def _play_notify_sound() -> bool:
 
 # value of the auto-appended free-text option on every single/multi decision
 OTHER = "__other__"
+
+# only these schemes are handed to the browser on a link click — never blindly
+# hand an arbitrary URI (file://, javascript:, custom app handlers) to xdg-open
+_OPENABLE_SCHEMES = ("http://", "https://", "mailto:")
+
+
+def _md_parser() -> MarkdownIt:
+    """gfm-like parser with linkify ON, so BARE urls in ticket context (Loom,
+    page links, screenshot/video urls pasted raw) render as clickable links —
+    not just explicit [text](url) markdown. Requires linkify-it-py (a dep)."""
+    return MarkdownIt("gfm-like", {"linkify": True}).enable("linkify")
+
+
+def _open_url(url: str) -> bool:
+    """Open a web URL in the user's default browser, fully detached so it never
+    blocks the event loop or corrupts the TUI. Returns False for non-web schemes
+    or if no opener exists."""
+    if not url.lower().startswith(_OPENABLE_SCHEMES):
+        return False
+    if shutil.which("xdg-open"):
+        try:
+            subprocess.Popen(
+                ["xdg-open", url],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL,
+            )
+            return True
+        except OSError:
+            pass
+    try:
+        import webbrowser
+
+        return webbrowser.open(url)
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def _option_label(option: dict) -> str:
@@ -300,6 +337,13 @@ class DecisionApp(App):
     MarkdownTableContent > .header {
         color: ansi_blue;
     }
+    Markdown {
+        link-color: ansi_blue;
+        link-style: underline;
+        link-color-hover: ansi_default;
+        link-background-hover: ansi_blue;
+        link-style-hover: bold;
+    }
     """
 
     BINDINGS = [
@@ -343,7 +387,11 @@ class DecisionApp(App):
             with ContentSwitcher(initial="panel-0"):
                 for i, d in enumerate(self.decisions):
                     with VerticalScroll(id=f"panel-{i}", classes="panel"):
-                        yield Markdown(_decision_md(self.spec, d))
+                        yield Markdown(
+                            _decision_md(self.spec, d),
+                            parser_factory=_md_parser,
+                            open_links=False,  # our guarded handler opens links
+                        )
                         dtype = d.get("type", "single")
                         if dtype == "single":
                             widget = RadioSet(
@@ -483,6 +531,17 @@ class DecisionApp(App):
         self._transcribing = False
         target.border_title = self._voice_orig_title
         self.notify(f"Transcription failed: {msg}", severity="error")
+
+    # --- links -------------------------------------------------------------
+
+    def on_markdown_link_clicked(self, event: Markdown.LinkClicked) -> None:
+        # click a link in any decision's context (Loom, page, screenshot, etc.)
+        # and it opens in the default browser on Jake's desktop
+        url = event.href
+        if _open_url(url):
+            self.notify(f"Opening {url}", title="link")
+        else:
+            self.notify(f"Won't open non-web URL: {url}", severity="warning")
 
     # --- answer collection -------------------------------------------------
 
