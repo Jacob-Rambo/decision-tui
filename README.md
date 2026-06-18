@@ -47,6 +47,14 @@ clears.
 - Text boxes grow with their content; ctrl+c clears one.
 - Opens on the tab running Claude and rings that tab's bell.
 
+## Native picker vs Decision TUI
+
+The built-in `AskUserQuestion` picker takes one question with a few options and
+no room for context. The dashboard shows the whole decision (ticket, evidence,
+tradeoffs, links) and collects several answers at once.
+
+![Native picker vs Decision TUI](docs/comparison.png)
+
 ## How Claude uses it
 
 The MCP server (`decision_tui/mcp_server.py`, command `decision-tui-mcp`) exposes
