@@ -9,7 +9,7 @@ in a structured UI; the answers go straight back to the model as data.
 The agent generates *data* (a JSON decision spec), never UI code — so generation
 stays reliable and the renderer is swappable.
 
-![decision dashboard](https://github.com/Jacob-Rambo/decision-tui) <!-- screenshot welcome -->
+![decision dashboard](docs/screenshot.svg)
 
 ## Quick start
 
