@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# Sync the in-repo skill source to every Claude Code instance's skills dir.
+# Install/refresh the in-repo skill into your Claude Code skills dir(s).
 #
-# Claude Code's startup scan does not follow symlinked skill directories, so
-# the config dirs hold real copies; this script is the one command that
-# refreshes them after editing skills/ in the repo.
+# Claude Code's startup scan does not follow symlinked skill directories, so the
+# skills dir needs real copies; this refreshes them after you edit skills/.
+#
+# Usage: bin/sync-skills [extra-skills-dir ...]
+#   Defaults to ~/.claude/skills. Pass extra targets as arguments if you run
+#   more than one Claude config dir, e.g.:
+#     bin/sync-skills ~/.claude-work/skills
 set -u
 SRC="$(cd "$(dirname "$0")/../skills" && pwd)"
-TARGETS=(
-    "$HOME/.claude/skills"
-    "$HOME/.claude-work/skills"
-    "/mnt/general-storage/repos/internal-dev-env/.claude/skills"
-)
+TARGETS=("$HOME/.claude/skills" "$@")
 for target in "${TARGETS[@]}"; do
     mkdir -p "$target"
     for skill in "$SRC"/*/; do
