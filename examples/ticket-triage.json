@@ -1,0 +1,63 @@
+{
+  "title": "Ticket triage — demo (fictional data)",
+  "context_md": "Demo of the dense use case: each decision carries the whole ticket — metadata, original report, comments, work history, and the proposed fix — so you decide with full context and never leave the dashboard. All names, domains, and code here are invented.",
+  "decisions": [
+    {
+      "id": "tkt-201",
+      "type": "single",
+      "question": "TKT-201: Login loop after password reset",
+      "context_md": "| | |\n|---|---|\n| Site | app.example.com |\n| Priority | High |\n| Reporter | Support (via customer) |\n| Age | 4 days |\n| Status | Fix ready |\n\n### Original ticket\n> Users who reset their password get bounced back to the login screen in a loop. Started after last week's deploy. ~30 users/day per support logs.\n\n### Comments\n> **Support** · day 1 — Generating daily calls, can we prioritize?\n>\n> **PM** · day 1 — Bumped to High. Reproduced on staging with a fresh account.\n\n### Evidence\n- Loom walkthrough: https://www.loom.com/share/example-login-loop\n- Repro recording (local): file:///tmp/decision-tui-demo/login-loop.txt\n\n### Work history\n- Reproduced on staging: loop occurs only when the reset is started from the marketing subdomain\n- Root cause: session cookie set with `domain=www.example.com` but the reset flow lands on bare `example.com` — cookie never matches, auth check fails, redirect to login\n- Fix: normalize cookie domain to `.example.com`\n- Regression check: existing sessions unaffected (cookie name unchanged); verified logout/login on both hosts\n\n### Proposed fix\n```diff\n- set_cookie(name, value, domain='www.example.com', secure=True, httponly=True)\n+ set_cookie(name, value, domain='.example.com',     secure=True, httponly=True)\n```",
+      "options": [
+        {"id": "approve-pr", "label": "Approve — open PR", "description": "One-line cookie-domain fix, repro confirmed, low risk", "recommended": true},
+        {"id": "review", "label": "Send to review", "description": "Wants a second set of eyes on the auth path"},
+        {"id": "hold", "label": "Hold", "description": "Defer — not ready to ship"}
+      ]
+    },
+    {
+      "id": "tkt-188",
+      "type": "single",
+      "question": "TKT-188: Payment webhook timeouts causing duplicate charges",
+      "context_md": "| | |\n|---|---|\n| Site | Billing service |\n| Priority | Critical |\n| Reporter | Finance (duplicates flagged) |\n| Age | 2 days |\n| Status | Fix drafted — touches payments |\n\n### Original ticket\n> Three customers were charged twice this week. The payment provider's dashboard shows the webhook endpoint timing out and the provider retrying — both attempts processed.\n\n### Comments\n> **Finance** · day 1 — Refunded the duplicates manually. Need this stopped before the next billing run.\n>\n> **PM** · day 1 — Critical. Do NOT ship to the payment path without review.\n\n### Work history\n- Traced the timeout: the webhook handler does a CRM sync inline — CRM p95 is ~9s, the provider gives 10s before retry\n- No idempotency check on `payment.succeeded`, so the retry re-runs the charge flow\n- Fix drafted: (1) record processed event ids, skip duplicates; (2) move the CRM sync to a queued job so the webhook ACKs in <1s\n- LOW confidence flagged on the queue choice: the service has no existing job runner; this fix adds one\n\n### Proposed fix (summary)\n```text\nnew table: processed_events (event_id PK, processed_at)\nwebhook: insert-or-skip on event_id, enqueue crm_sync, return 200\nnew worker: drains the crm_sync queue\n```",
+      "options": [
+        {"id": "approve-pr", "label": "Approve — open PR", "description": "Idempotency + queued sync; stops the duplicates"},
+        {"id": "review", "label": "Send to review", "description": "Payment path + a new job runner — get review before shipping", "recommended": true},
+        {"id": "split", "label": "Split it", "description": "Ship the idempotency check now; defer the queue"}
+      ]
+    },
+    {
+      "id": "tkt-176",
+      "type": "single",
+      "question": "TKT-176: Color contrast failures on stat cards (WCAG AA)",
+      "context_md": "| | |\n|---|---|\n| Site | Design system |\n| Priority | Medium (compliance) |\n| Reporter | Accessibility audit |\n| Age | 12 days |\n| Status | Fix ready |\n\n### Original ticket\n> Automated audit: the stat-card component fails AA — white text on the brand accent `#4DB6AC` is 2.9:1, needs 4.5:1. Affects 14 pages.\n\n### Work history\n- A darker accent `#00796B` already exists in the palette as `--accent-700` and hits 5.1:1 with white text\n- Fix: swap the card background token; no new colors introduced\n- Visual diff generated for all 14 pages — layout unchanged, only the card background deepens\n- Audit re-run on the branch: 0 contrast failures remain\n\n### Proposed fix\n```css\n.stat-card {\n-  background: var(--accent-500); /* #4DB6AC — 2.9:1 */\n+  background: var(--accent-700); /* #00796B — 5.1:1 */\n}\n```",
+      "options": [
+        {"id": "approve-pr", "label": "Approve — open PR", "description": "On-palette token swap, audit passes, visual diffs attached", "recommended": true},
+        {"id": "review", "label": "Send to review", "description": "Design wants to confirm the token choice"},
+        {"id": "hold", "label": "Hold", "description": "Bundle with a larger design-system pass later"}
+      ]
+    },
+    {
+      "id": "release-bundle",
+      "type": "multi",
+      "question": "Which approved fixes go in today's release?",
+      "context_md": "Only tickets you approved above belong here. Anything sent to review or held ships later.\n\n| Candidate | Risk | Rollback |\n|---|---|---|\n| TKT-201 cookie domain | low | revert one line |\n| TKT-176 contrast token | low | revert token |\n\n(TKT-188 is in review — intentionally not a candidate.)",
+      "options": [
+        {"id": "tkt-201", "label": "TKT-201 login-loop fix"},
+        {"id": "tkt-176", "label": "TKT-176 contrast fix"}
+      ]
+    },
+    {
+      "id": "notify-support",
+      "type": "bool",
+      "label": "Post a release note to the support channel after deploy",
+      "question": "Notify support when this ships?",
+      "context_md": "Support asked to be told when TKT-201 lands so they can close the open tickets."
+    },
+    {
+      "id": "triage-notes",
+      "type": "text",
+      "required": false,
+      "question": "Anything to flag for the next triage?",
+      "context_md": "Free-form. Voice works here too (ctrl+r)."
+    }
+  ]
+}
