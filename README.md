@@ -8,7 +8,7 @@ in the UI and the answers go back to the model as structured data.
 The agent emits a JSON spec, not UI code, so generation stays separate from the
 renderer.
 
-![Decision TUI](docs/screenshot.svg)
+![Decision TUI](docs/screenshot.png)
 
 ## Install
 
