@@ -124,7 +124,7 @@ So when a ticket carries links, **put them in `context_md`** — don't strip or 
 
 A working sample spec lives at `/mnt/general-storage/repos/decision-tui/examples/sample-spec.json`.
 
-For the canonical dense use case — batch ticket triage where each decision carries the original ticket, comment thread, work history, and proposed fix — imitate `/mnt/general-storage/repos/decision-tui/examples/ticket-triage.json`: metadata table first, then `### Original ticket` (blockquoted), `### Comments` (blockquoted, attributed, dated), `### Work history` (bullets ending in the agent's confidence/recommendation), `### Proposed fix` (fenced code). Per-ticket disposition decisions first, then batch-level decisions (release bundle as `multi`, flags as `bool`, free-form notes as `text`) that reference the earlier ones.
+For the canonical dense use case — batch ticket triage where each decision carries the original ticket, comment thread, work history, and proposed fix — imitate `/mnt/general-storage/repos/decision-tui/examples/ticket-triage.json`: metadata table first, then `### Original ticket` (blockquoted), `### Comments` (one blockquote per comment: `**Author** · *date*` on the first line, a trailing `\` hard break, then the message), `### Work history` (bullets ending in the agent's confidence/recommendation), `### Proposed fix` (fenced code). Per-ticket disposition decisions first, then batch-level decisions (release bundle as `multi`, flags as `bool`, free-form notes as `text`) that reference the earlier ones.
 
 Demo the simple spec with:
 

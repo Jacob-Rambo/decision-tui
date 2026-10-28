@@ -299,6 +299,29 @@ class DecisionApp(App):
         padding: 0 1;
         margin: 0 1 1 0;
     }
+    /* status + number sit in a fixed gutter so a long question wraps with a
+       hanging indent, aligned under its own first word */
+    #nav ListItem Horizontal {
+        height: auto;
+    }
+    #nav .navmark {
+        width: 6;
+    }
+    #nav .navtext {
+        width: 1fr;
+    }
+    /* Textual's scrollbar colors are blends that collapse to a solid black
+       track and a heavy bright thumb; a thin neutral bar stays out of the way */
+    * {
+        scrollbar-size-vertical: 1;
+        scrollbar-background: ansi_default;
+        scrollbar-background-hover: ansi_default;
+        scrollbar-background-active: ansi_default;
+        scrollbar-color: ansi_bright_black;
+        scrollbar-color-hover: ansi_white;
+        scrollbar-color-active: ansi_blue;
+        scrollbar-corner-color: ansi_default;
+    }
     ContentSwitcher {
         width: 1fr;
     }
@@ -319,7 +342,7 @@ class DecisionApp(App):
     RadioSet {
         & > RadioButton > .toggle--button {
             background: ansi_default;
-            color: ansi_bright_black;
+            color: ansi_default;
         }
         & > RadioButton.-on > .toggle--button {
             color: ansi_green;
@@ -341,7 +364,7 @@ class DecisionApp(App):
     SelectionList {
         & > .selection-list--button {
             background: ansi_default;
-            color: ansi_bright_black;
+            color: ansi_default;
         }
         & > .selection-list--button-selected {
             background: ansi_default;
@@ -387,6 +410,28 @@ class DecisionApp(App):
     TextArea.other:disabled {
         opacity: 45%;
     }
+    /* the question heading: default h2 is underlined primary, which reads as
+       a link next to the real (blue, underlined) links */
+    MarkdownH2 {
+        color: ansi_default;
+        text-style: bold;
+        margin: 1 0 1 0;
+    }
+    /* blockquotes (ticket text, comments) and code fences default to blended
+       backgrounds that collapse to a solid black slab; an accent rule on the
+       left carries the "quoted" signal with the terminal's own bg and fg */
+    MarkdownBlockQuote {
+        background: ansi_default;
+        color: ansi_default;
+        border-left: outer ansi_blue;
+        padding: 0 2;
+    }
+    MarkdownFence {
+        background: ansi_default;
+        color: ansi_default;
+        border: round ansi_bright_black;
+        padding: 0 1;
+    }
     MarkdownTableContent {
         keyline: thin ansi_bright_black;
     }
@@ -429,10 +474,14 @@ class DecisionApp(App):
             yield ListView(
                 *[
                     ListItem(
-                        Label(
-                            f"{UNANSWERED} {i + 1}. {d['question']}",
-                            id=f"navlabel-{i}",
-                            markup=True,
+                        Horizontal(
+                            Label(
+                                f"{UNANSWERED} {i + 1}.",
+                                id=f"navmark-{i}",
+                                classes="navmark",
+                                markup=True,
+                            ),
+                            Label(d["question"], classes="navtext", markup=False),
                         ),
                         id=f"nav-{i}",
                     )
@@ -635,13 +684,11 @@ class DecisionApp(App):
 
     def _refresh_nav(self) -> None:
         n = 0
-        for i, d in enumerate(self.decisions):
+        for i in range(len(self.decisions)):
             answered = self._answered(i)
             n += answered
             mark = ANSWERED if answered else UNANSWERED
-            self.query_one(f"#navlabel-{i}", Label).update(
-                f"{mark} {i + 1}. {d['question']}"
-            )
+            self.query_one(f"#navmark-{i}", Label).update(f"{mark} {i + 1}.")
         self.sub_title = f"{self.spec['title']} · {n}/{len(self.decisions)} answered"
         if not self._all_answered_notified and n == len(self.decisions):
             self._all_answered_notified = True
